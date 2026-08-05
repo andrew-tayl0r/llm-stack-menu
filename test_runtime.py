@@ -13,6 +13,8 @@ from controller import (
     headroom_apply_command,
     default_state,
     mcp_commands,
+    xcode_mcp_commands,
+    enable_xcode_mcp,
     headroom_claude_mcp_commands,
     refresh_restart_state,
     render_menu,
@@ -49,6 +51,24 @@ class RuntimeHelperTests(unittest.TestCase):
         self.assertEqual(commands[0], ["claude", "mcp", "add", "-s", "user", "jcodemunch", "/opt/homebrew/bin/uvx", "jcodemunch-mcp"])
         self.assertEqual(commands[1], ["/Applications/ChatGPT.app/Contents/Resources/codex", "mcp", "add", "jcodemunch", "--", "/opt/homebrew/bin/uvx", "jcodemunch-mcp"])
         self.assertNotIn("--hooks", " ".join(" ".join(command) for command in commands))
+
+    def test_xcode_mcp_commands_use_official_bridge(self):
+        self.assertEqual(xcode_mcp_commands(), [
+            ["claude", "mcp", "add", "-s", "user", "xcode", "xcrun", "mcpbridge"],
+            ["/Applications/ChatGPT.app/Contents/Resources/codex", "mcp", "add", "xcode", "--", "xcrun", "mcpbridge"],
+        ])
+
+    def test_enable_xcode_mcp_replaces_both_registrations(self):
+        with patch.object(controller, "_run", return_value=(True, "")) as run:
+            ok, message = enable_xcode_mcp()
+        self.assertTrue(ok)
+        self.assertIn("configured", message)
+        self.assertEqual([call.args[0] for call in run.call_args_list], [
+            ["claude", "mcp", "remove", "xcode"],
+            ["claude", "mcp", "add", "-s", "user", "xcode", "xcrun", "mcpbridge"],
+            ["/Applications/ChatGPT.app/Contents/Resources/codex", "mcp", "remove", "xcode"],
+            ["/Applications/ChatGPT.app/Contents/Resources/codex", "mcp", "add", "xcode", "--", "xcrun", "mcpbridge"],
+        ])
 
     def test_restart_state_stays_pending_for_the_same_client_process(self):
         state = default_state()
@@ -250,6 +270,7 @@ class RuntimeHelperTests(unittest.TestCase):
         self.assertIn("param3=--days param4=0", output.getvalue())
         self.assertIn("Check for tool updates", output.getvalue())
         self.assertIn("Repair menu-bar plugins", output.getvalue())
+        self.assertIn("Enable Xcode MCP bridge", output.getvalue())
         self.assertIn("**Mode** | md=true color=", output.getvalue())
         self.assertIn("**Tools** | md=true color=", output.getvalue())
         self.assertIn("**Status** | md=true color=", output.getvalue())

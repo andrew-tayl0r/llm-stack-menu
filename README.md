@@ -17,6 +17,7 @@ The separate statistics item combines each tool's reported token savings while k
 - One-click Optimised and Native modes
 - Mixed-state detection and independent tool switches
 - Optional Headroom CLI routing (disabled by default so Claude GUI Remote Control remains available)
+- One-click registration of Apple's Xcode MCP bridge for Claude Code and Codex
 - Live llmtrim, RTK, Headroom and jCodeMunch statistics
 - Today, rolling-window and lifetime breakdowns where the tools provide them
 - Quick access to the Headroom dashboard, `llmtrim status --watch`, `rtk gain` and the jCodeMunch receipt

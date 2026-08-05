@@ -108,6 +108,32 @@ def mcp_commands(action: str) -> list[list[str]]:
     raise ValueError(f"Unsupported MCP action: {action}")
 
 
+def xcode_mcp_commands() -> list[list[str]]:
+    """Return the official Xcode MCP bridge registrations for both clients."""
+    return [
+        ["claude", "mcp", "add", "-s", "user", "xcode", "xcrun", "mcpbridge"],
+        [CODEX_BIN, "mcp", "add", "xcode", "--", "xcrun", "mcpbridge"],
+    ]
+
+
+def enable_xcode_mcp() -> tuple[bool, str]:
+    """Register Xcode's MCP bridge with Claude Code and Codex."""
+    results = []
+    for command in xcode_mcp_commands():
+        client = "Claude Code" if command[0] == "claude" else "Codex"
+        remove_command = (
+            ["claude", "mcp", "remove", "xcode"]
+            if command[0] == "claude"
+            else [CODEX_BIN, "mcp", "remove", "xcode"]
+        )
+        _run(remove_command, allow_failure=True)
+        ok, output = _run(command, allow_failure=True)
+        if not ok:
+            return False, f"Could not configure Xcode MCP for {client}: {output or 'command failed'}"
+        results.append(client)
+    return True, "Xcode MCP bridge configured for Claude Code and Codex; enable Xcode Intelligence access if prompted"
+
+
 def headroom_claude_mcp_commands(action: str) -> list[str]:
     if action == "add":
         return ["claude", "mcp", "add", "-s", "user", "headroom", HEADROOM_BIN, "mcp", "serve"]
@@ -675,6 +701,7 @@ def render_menu() -> None:
     plugin = str(Path(__file__).with_name("llm-context-controls.10s.sh"))
     print(f"  Check for tool updates | bash={plugin} param1=check-updates terminal=true color={DETAIL_COLOR} trim=false")
     print(f"  Repair menu-bar plugins | bash={plugin} param1=install-plugins terminal=true refresh=true color={DETAIL_COLOR} trim=false")
+    print(f"  Enable Xcode MCP bridge | bash={plugin} param1=enable-xcode-mcp terminal=true refresh=true color={DETAIL_COLOR} trim=false")
     print("---")
     print(_menu_item("Settings", SECTION_COLOR, bold=True))
     included = bool(state.get("headroom_in_mode", False))
@@ -768,6 +795,8 @@ def main(argv: list[str]) -> int:
         ok, message = check_updates()
     elif command == "install-plugins":
         ok, message = install_plugins()
+    elif command == "enable-xcode-mcp":
+        ok, message = enable_xcode_mcp()
     elif command == "headroom-scope":
         requested = argv[1].lower() if len(argv) > 1 else "toggle"
         ok, message = toggle_headroom_participation(None if requested == "toggle" else requested == "on")
@@ -776,7 +805,7 @@ def main(argv: list[str]) -> int:
     elif command == "open-rtk-gain":
         ok, message = open_terminal_tool("rtk")
     else:
-        print("usage: controller.py status|optimized|native|toggle <component>|headroom-scope [on|off]|install-jcodemunch|check-updates|install-plugins|open-llmtrim-watch|open-rtk-gain")
+        print("usage: controller.py status|optimized|native|toggle <component>|headroom-scope [on|off]|install-jcodemunch|check-updates|install-plugins|enable-xcode-mcp|open-llmtrim-watch|open-rtk-gain")
         return 2
     print(message)
     return 0 if ok else 1
