@@ -637,7 +637,7 @@ def set_remote_control(enabled: bool) -> tuple[bool, str]:
 SECTION_COLOR = "#172033,#F3F4F6"
 DETAIL_COLOR = "#334155,#D1D5DB"
 TOOL_COLORS = {
-    "headroom": "#C2410C,#FDBA74",
+    "headroom": "#FF375F,#FF6482",
     "llmtrim": "#5856D6,#A7A5FF",
     "rtk": "#15803D,#86EFAC",
     "jcodemunch": "#7E22CE,#D8B4FE",
