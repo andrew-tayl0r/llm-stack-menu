@@ -232,12 +232,12 @@ class RuntimeHelperTests(unittest.TestCase):
             "needs_restart": False,
             "components": {"headroom": False, "llmtrim": False, "rtk": False, "jcodemunch": False},
             "remote_control": True,
-            "message": "Normal mode",
+            "message": "Native mode",
         }
         with patch.object(controller, "current_status", return_value=state), patch.object(sys, "stdout", new_callable=io.StringIO) as output:
             render_menu()
         self.assertIn("Optimised mode", output.getvalue())
-        self.assertIn("Normal mode (all off)", output.getvalue())
+        self.assertIn("Native mode (all off)", output.getvalue())
         self.assertIn("Headroom Dashboard", output.getvalue())
         self.assertIn("GUIs", output.getvalue())
         self.assertIn("llmtrim Watch", output.getvalue())
@@ -260,13 +260,13 @@ class RuntimeHelperTests(unittest.TestCase):
         rendered = output.getvalue()
         self.assertLess(rendered.index("Status"), rendered.index("GUIs"))
         self.assertLess(rendered.index("GUIs"), rendered.index("Maintenance"))
-        self.assertIn('  Current  —  Normal | color=', rendered)
+        self.assertIn('  Current  —  Native | color=', rendered)
         self.assertIn('  ⌁ Headroom  —  OFF |', rendered)
         self.assertIn('  ◉ Claude Remote Control  —  ON |', rendered)
         self.assertIn("Include Headroom in Optimised mode", rendered)
         self.assertLess(rendered.index("Maintenance"), rendered.index("Settings"))
         self.assertNotIn('badge=', rendered)
-        self.assertLess(rendered.index("  Current  —  Normal"), rendered.index("GUIs"))
+        self.assertLess(rendered.index("  Current  —  Native"), rendered.index("GUIs"))
         indented_rows = [line for line in rendered.splitlines() if line.startswith("  ") and line.strip()]
         self.assertTrue(indented_rows)
         self.assertTrue(all("trim=false" in line for line in indented_rows))

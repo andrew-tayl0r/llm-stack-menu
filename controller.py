@@ -473,7 +473,7 @@ def _set_mode(mode: str) -> tuple[bool, str]:
         state["remote_control"] = True
         state["mode"] = "native"
         mark_restart_required(state, ["claude", "codex"])
-        state["message"] = "Normal mode enabled; Remote Control available after relaunching Claude"
+        state["message"] = "Native mode enabled; Remote Control available after relaunching Claude"
     _save_state(state)
     return True, state["message"]
 
@@ -636,11 +636,11 @@ def render_menu() -> None:
     color = "#35c759" if state["mode"] == "optimized" else ("#ff9f0a" if state["mode"] == "mixed" else "#8e8e93")
     print(f"{title} | color={color}")
     print("---")
-    visible_mode = {"optimized": "Optimised", "mixed": "Mixed", "native": "Normal"}[state["mode"]]
+    visible_mode = {"optimized": "Optimised", "mixed": "Mixed", "native": "Native"}[state["mode"]]
     print(_menu_item("Mode", SECTION_COLOR, bold=True))
     print(_menu_item(f"  Current  —  {visible_mode}", DETAIL_COLOR))
     print(f"  Optimised mode | {_swiftbar_action('optimized')} trim=false")
-    print(f"  Normal mode (all off) | {_swiftbar_action('native')} trim=false")
+    print(f"  Native mode (all off) | {_swiftbar_action('native')} trim=false")
     print("---")
     print(_menu_item("Tools", SECTION_COLOR, bold=True))
     symbols = {"headroom": "⌁", "llmtrim": "◒", "rtk": "▱", "jcodemunch": "⌘"}
