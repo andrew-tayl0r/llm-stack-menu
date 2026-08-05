@@ -638,10 +638,10 @@ SECTION_COLOR = "#172033,#F3F4F6"
 DETAIL_COLOR = "#334155,#D1D5DB"
 TOOL_COLORS = {
     "headroom": "#C2410C,#FDBA74",
-    "llmtrim": "#1D4ED8,#93C5FD",
+    "llmtrim": "#0F766E,#5EEAD4",
     "rtk": "#15803D,#86EFAC",
     "jcodemunch": "#7E22CE,#D8B4FE",
-    "xcode": "#0E7490,#67E8F9",
+    "xcode": "#0A84FF,#64D2FF",
 }
 
 
@@ -716,7 +716,7 @@ def render_menu() -> None:
         row_color = TOOL_COLORS[component] if enabled else DETAIL_COLOR
         print(f"  {symbols[component]} {labels[component]}  —  {mark} | {_swiftbar_action('toggle', component)} color={row_color} trim=false")
     remote = bool(state.get("remote_control"))
-    remote_color = "#1D4ED8,#93C5FD" if remote else DETAIL_COLOR
+    remote_color = "#FF9F0A,#FFD60A" if remote else DETAIL_COLOR
     print(f"  ◉ Claude Remote Control  —  {'ON' if remote else 'OFF'} | {_swiftbar_action('remote-control')} color={remote_color} trim=false")
     print("---")
     message = state.get("message", "")
