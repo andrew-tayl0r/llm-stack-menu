@@ -2,7 +2,7 @@
 # <xbar.title>LLM Context Controls</xbar.title>
 # <xbar.version>1</xbar.version>
 # <xbar.author>Andrew Taylor</xbar.author>
-# <xbar.desc>Toggle Headroom, llmtrim, RTK, and jCodeMunch for Claude and Codex.</xbar.desc>
+# <xbar.desc>Control Claude Code and Codex optimisation tools. Headroom is CLI-only and optional because its routing can disable Claude GUI Remote Control.</xbar.desc>
 # <xbar.dependencies>bash,python3,headroom,llmtrim,rtk,uv,claude,codex</xbar.dependencies>
 # <swiftbar.hideDisablePlugin>true</swiftbar.hideDisablePlugin>
 # SwiftBar controller for the local LLM optimisation stack.

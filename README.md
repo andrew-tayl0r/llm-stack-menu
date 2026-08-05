@@ -1,6 +1,6 @@
 # LLM Stack Menu
 
-SwiftBar plugins that provide menu-bar controls and live savings statistics for a Claude Code-focused token-optimisation setup on macOS, with Codex support.
+SwiftBar plugins that provide menu-bar controls and live savings statistics for a Claude Code-focused token-optimisation setup on macOS, with Codex support. It is a controller for the tools you already have installed, not a replacement for Claude Code or Codex.
 
 The controller manages Headroom, llmtrim, RTK and jCodeMunch from one menu:
 
@@ -8,7 +8,7 @@ The controller manages Headroom, llmtrim, RTK and jCodeMunch from one menu:
 - **Native mode** stops the background services and removes the routes, hooks and MCP registrations managed by this plugin, returning Claude Code and Codex to their native configuration when you are not coding.
 - **Mixed mode** appears automatically when only some tools are enabled. Individual switches let you choose the exact combination.
 
-Headroom has a separate **Headroom in Optimised mode** setting. Leave it off to keep Headroom available for an explicitly launched CLI session without routing the Claude GUI or affecting the green Optimised status. Turn it on only when you want Headroom to participate in the managed client configuration.
+Headroom's proxy works with the Claude Code CLI, not the standalone Claude GUI. Its managed routing can therefore interfere with Claude Remote Control. The separate **Include Headroom in Optimised mode** setting is off by default: Headroom can still be launched for an explicit CLI session, while the Claude GUI remains unrouted and the other tools can stay green as Optimised. Turn it on only when you want Headroom routed into the managed client configuration.
 
 The separate statistics item combines each tool's reported token savings while keeping today, rolling-window and lifetime scopes distinct.
 
@@ -16,7 +16,7 @@ The separate statistics item combines each tool's reported token savings while k
 
 - One-click Optimised and Native modes
 - Mixed-state detection and independent tool switches
-- Claude remote-control routing for Headroom
+- Optional Headroom CLI routing (disabled by default so Claude GUI Remote Control remains available)
 - Live llmtrim, RTK, Headroom and jCodeMunch statistics
 - Today, rolling-window and lifetime breakdowns where the tools provide them
 - Quick access to the Headroom dashboard, `llmtrim status --watch`, `rtk gain` and the jCodeMunch receipt

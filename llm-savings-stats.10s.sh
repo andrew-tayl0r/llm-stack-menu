@@ -2,7 +2,7 @@
 # <xbar.title>LLM Savings</xbar.title>
 # <xbar.version>1</xbar.version>
 # <xbar.author>Andrew Taylor</xbar.author>
-# <xbar.desc>Live Headroom, llmtrim, RTK, and jCodeMunch savings.</xbar.desc>
+# <xbar.desc>Live token savings from llmtrim, RTK, jCodeMunch, and optional Headroom CLI use.</xbar.desc>
 # <xbar.dependencies>bash,python3,headroom,llmtrim,rtk</xbar.dependencies>
 # SwiftBar statistics plugin for the local LLM optimisation stack.
 set -euo pipefail
