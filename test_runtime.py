@@ -100,6 +100,18 @@ class RuntimeHelperTests(unittest.TestCase):
         self.assertFalse(state["needs_restart"])
         self.assertEqual(state["restart_pending"], {})
 
+    def test_restart_warning_is_per_client_and_skips_never_started_codex(self):
+        state = default_state()
+        with patch.object(
+            controller,
+            "_client_processes",
+            return_value={"claude": [{"pid": 42, "started_at": 100.0}], "codex": []},
+        ):
+            controller.mark_restart_required(state, ["claude", "codex"])
+        self.assertIn("claude", state["restart_pending"])
+        self.assertNotIn("codex", state["restart_pending"])
+        self.assertTrue(state["needs_restart"])
+
     def test_client_process_detection_finds_claude_cli(self):
         ps_output = "1234 Wed Aug  5 13:00:00 2026 /Users/andrew/bin/claude --resume abc\n"
         completed = subprocess.CompletedProcess(["ps"], 0, ps_output, "")

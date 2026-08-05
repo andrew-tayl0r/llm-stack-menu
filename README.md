@@ -23,6 +23,8 @@ The separate statistics item combines each tool's reported token savings while k
 - Quick access to the Headroom dashboard, `llmtrim status --watch`, `rtk gain` and the jCodeMunch receipt
 - Configuration backups under `~/.llm-stack-controller/backups`
 
+Restart notices are tracked independently for Claude and Codex. A notice is shown only when that client was already running when its configuration changed; a client that has not been opened yet will not be asked to relaunch.
+
 ## Requirements
 
 - macOS
