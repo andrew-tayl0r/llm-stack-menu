@@ -330,7 +330,7 @@ def _headroom_metrics_enabled() -> bool:
 SECTION_COLOR = "#172033,#F3F4F6"
 DETAIL_COLOR = "#334155,#D1D5DB"
 TOOL_COLORS = {
-    "llmtrim": "#0F766E,#5EEAD4",
+    "llmtrim": "#5856D6,#A7A5FF",
     "rtk": "#15803D,#86EFAC",
     "headroom": "#C2410C,#FDBA74",
     "jcodemunch": "#7E22CE,#D8B4FE",

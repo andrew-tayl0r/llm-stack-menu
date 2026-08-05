@@ -638,7 +638,7 @@ SECTION_COLOR = "#172033,#F3F4F6"
 DETAIL_COLOR = "#334155,#D1D5DB"
 TOOL_COLORS = {
     "headroom": "#C2410C,#FDBA74",
-    "llmtrim": "#0F766E,#5EEAD4",
+    "llmtrim": "#5856D6,#A7A5FF",
     "rtk": "#15803D,#86EFAC",
     "jcodemunch": "#7E22CE,#D8B4FE",
     "xcode": "#0A84FF,#64D2FF",
@@ -708,7 +708,7 @@ def render_menu() -> None:
     print("---")
     print(_menu_item("Tools", SECTION_COLOR, bold=True))
     symbols = {"headroom": "⌁", "llmtrim": "◒", "rtk": "▱", "jcodemunch": "⌘"}
-    symbols["xcode"] = "🔨"
+    symbols["xcode"] = "⚙︎"
     labels = {"headroom": "Headroom", "llmtrim": "llmtrim", "rtk": "RTK · Claude hook", "jcodemunch": "jCodeMunch", "xcode": "Xcode MCP"}
     for component in ("headroom", "llmtrim", "rtk", "jcodemunch", "xcode"):
         enabled = bool(state["components"].get(component))
