@@ -508,7 +508,7 @@ def _set_mode(mode: str) -> tuple[bool, str]:
             state["message"] = xcode_message
             _save_state(state)
             return False, xcode_message
-        state["remote_control"] = False
+        state["remote_control"] = not include_headroom
         state["mode"] = mode
         mark_restart_required(state, ["claude", "codex"])
         suffix = "; Headroom excluded" if not include_headroom else "; relaunch Claude/Codex"
