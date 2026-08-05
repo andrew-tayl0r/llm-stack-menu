@@ -653,10 +653,6 @@ def render_menu() -> None:
     remote = bool(state.get("remote_control"))
     remote_color = "#1D4ED8,#93C5FD" if remote else DETAIL_COLOR
     print(f"  ◉ Claude Remote Control  —  {'ON' if remote else 'OFF'} | {_swiftbar_action('remote-control')} color={remote_color} trim=false")
-    included = bool(state.get("headroom_in_mode", False))
-    included_mark = "ON" if included else "OFF"
-    included_color = TOOL_COLORS["headroom"] if included else DETAIL_COLOR
-    print(f"  Headroom in Optimised mode  —  {included_mark} | {_swiftbar_action('headroom-scope', 'off' if included else 'on')} color={included_color} trim=false")
     print("---")
     message = state.get("message", "")
     if state.get("busy"):
@@ -679,6 +675,12 @@ def render_menu() -> None:
     plugin = str(Path(__file__).with_name("llm-context-controls.10s.sh"))
     print(f"  Check for tool updates | bash={plugin} param1=check-updates terminal=true color={DETAIL_COLOR} trim=false")
     print(f"  Repair menu-bar plugins | bash={plugin} param1=install-plugins terminal=true refresh=true color={DETAIL_COLOR} trim=false")
+    print("---")
+    print(_menu_item("Settings", SECTION_COLOR, bold=True))
+    included = bool(state.get("headroom_in_mode", False))
+    included_mark = "ON" if included else "OFF"
+    included_color = TOOL_COLORS["headroom"] if included else DETAIL_COLOR
+    print(f"  Include Headroom in Optimised mode  —  {included_mark} | {_swiftbar_action('headroom-scope', 'off' if included else 'on')} color={included_color} trim=false")
 
 
 def set_busy(action: str) -> None:
@@ -895,7 +897,7 @@ def add_headroom_codex_config(text: str) -> str:
 def status_from_values(values: dict[str, Any]) -> dict[str, str]:
     mode = str(values.get("mode", "native"))
     if mode == "optimized":
-        return {"title": "◈ Optimized", "mode": "optimized"}
+        return {"title": "◈ Optimised", "mode": "optimized"}
     if mode == "mixed":
         return {"title": "◐ Mixed", "mode": "mixed"}
     return {"title": "◉ Native", "mode": "native"}

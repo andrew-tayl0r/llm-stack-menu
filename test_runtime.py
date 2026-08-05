@@ -86,7 +86,7 @@ class RuntimeHelperTests(unittest.TestCase):
             **state,
             "components": dict(state["components"]),
             "mode": "optimized",
-            "title": "◈ Optimized",
+            "title": "◈ Optimised",
         }
         with (
             patch.object(controller, "current_status", return_value=current),
@@ -263,7 +263,8 @@ class RuntimeHelperTests(unittest.TestCase):
         self.assertIn('  Current  —  Normal | color=', rendered)
         self.assertIn('  ⌁ Headroom  —  OFF |', rendered)
         self.assertIn('  ◉ Claude Remote Control  —  ON |', rendered)
-        self.assertIn("Headroom in Optimised mode", rendered)
+        self.assertIn("Include Headroom in Optimised mode", rendered)
+        self.assertLess(rendered.index("Maintenance"), rendered.index("Settings"))
         self.assertNotIn('badge=', rendered)
         self.assertLess(rendered.index("  Current  —  Normal"), rendered.index("GUIs"))
         indented_rows = [line for line in rendered.splitlines() if line.startswith("  ") and line.strip()]

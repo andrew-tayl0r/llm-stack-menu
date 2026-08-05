@@ -102,7 +102,7 @@ class ConfigTransformTests(unittest.TestCase):
             self.assertTrue(controller._headroom_running())
 
     def test_status_title_uses_compact_symbol(self):
-        self.assertEqual(status_from_values({"mode": "optimized"})["title"], "◈ Optimized")
+        self.assertEqual(status_from_values({"mode": "optimized"})["title"], "◈ Optimised")
         self.assertEqual(status_from_values({"mode": "native"})["title"], "◉ Native")
         self.assertEqual(status_from_values({"mode": "mixed"})["title"], "◐ Mixed")
 
