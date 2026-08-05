@@ -36,8 +36,8 @@ if [[ "${1:-}" == "optimized" || "${1:-}" == "native" || "${1:-}" == "remote-con
   exit "$status"
 fi
 
-if [[ "${1:-}" == "check-updates" || "${1:-}" == "install-plugins" || "${1:-}" == "open-llmtrim-watch" || "${1:-}" == "open-rtk-gain" ]]; then
-  exec "$PYTHON" "$CONTROLLER" "$1"
+if [[ "${1:-}" == "check-updates" || "${1:-}" == "install-plugins" || "${1:-}" == "headroom-scope" || "${1:-}" == "open-llmtrim-watch" || "${1:-}" == "open-rtk-gain" ]]; then
+  exec "$PYTHON" "$CONTROLLER" "$@"
 fi
 
 exec "$PYTHON" "$CONTROLLER" menu

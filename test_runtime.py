@@ -23,6 +23,7 @@ class RuntimeHelperTests(unittest.TestCase):
     def test_default_state_is_native_and_has_all_components(self):
         state = default_state()
         self.assertEqual(state["mode"], "native")
+        self.assertFalse(state["headroom_in_mode"])
         self.assertEqual(set(state["components"]), {"headroom", "llmtrim", "rtk", "jcodemunch"})
 
     def test_atomic_json_write_round_trips(self):
@@ -105,6 +106,37 @@ class RuntimeHelperTests(unittest.TestCase):
         self.assertTrue(state["components"]["rtk"])
         self.assertTrue(state["components"]["jcodemunch"])
 
+    def test_excluded_headroom_does_not_turn_optimised_mode_mixed(self):
+        state = default_state()
+        state["headroom_in_mode"] = False
+        with (
+            patch.object(controller, "_load_state", return_value=state),
+            patch.object(controller, "_headroom_running", return_value=False),
+            patch.object(controller, "_llmtrim_running", return_value=True),
+            patch.object(controller, "_rtk_enabled", return_value=True),
+            patch.object(controller, "_jcodemunch_enabled", return_value=True),
+            patch.object(controller, "_save_state"),
+        ):
+            status = controller.current_status()
+        self.assertEqual(status["mode"], "optimized")
+
+    def test_headroom_participation_toggle_removes_routes_when_excluded(self):
+        state = default_state()
+        state["headroom_in_mode"] = True
+        state["components"]["headroom"] = True
+        with (
+            patch.object(controller, "_load_state", return_value=state),
+            patch.object(controller, "_save_state"),
+            patch.object(controller, "_set_headroom_routes") as routes,
+            patch.object(controller, "_set_headroom_claude_mcp") as mcp,
+        ):
+            ok, message = controller.toggle_headroom_participation(False)
+        self.assertTrue(ok)
+        self.assertFalse(state["headroom_in_mode"])
+        routes.assert_called_once_with(False)
+        mcp.assert_called_once_with(False)
+        self.assertIn("excluded", message.lower())
+
     def test_headroom_claude_mcp_commands_are_explicit(self):
         self.assertEqual(
             headroom_claude_mcp_commands("add"),
@@ -114,6 +146,7 @@ class RuntimeHelperTests(unittest.TestCase):
 
     def test_optimized_mode_continues_when_service_runs_but_readiness_times_out(self):
         state = default_state()
+        state["headroom_in_mode"] = True
 
         def fake_run(command, *, allow_failure=False):
             if command[:3] == ["headroom", "install", "start"]:
@@ -134,6 +167,7 @@ class RuntimeHelperTests(unittest.TestCase):
 
     def test_optimized_mode_reports_start_failure_without_routing_clients(self):
         state = default_state()
+        state["headroom_in_mode"] = True
 
         with (
             patch.object(controller, "_load_state", return_value=state),
@@ -152,6 +186,7 @@ class RuntimeHelperTests(unittest.TestCase):
 
     def test_optimized_mode_starts_llmtrim_before_headroom(self):
         state = default_state()
+        state["headroom_in_mode"] = True
         commands = []
 
         def fake_run(command, *, allow_failure=False):
@@ -228,6 +263,7 @@ class RuntimeHelperTests(unittest.TestCase):
         self.assertIn('  Current  —  Normal | color=', rendered)
         self.assertIn('  ⌁ Headroom  —  OFF |', rendered)
         self.assertIn('  ◉ Claude Remote Control  —  ON |', rendered)
+        self.assertIn("Headroom in Optimised mode", rendered)
         self.assertNotIn('badge=', rendered)
         self.assertLess(rendered.index("  Current  —  Normal"), rendered.index("GUIs"))
         indented_rows = [line for line in rendered.splitlines() if line.startswith("  ") and line.strip()]

@@ -4,9 +4,11 @@ SwiftBar plugins that provide menu-bar controls and live savings statistics for 
 
 The controller manages Headroom, llmtrim, RTK and jCodeMunch from one menu:
 
-- **Optimised mode** starts Headroom and llmtrim, routes Claude Code and Codex through Headroom, enables RTK's Claude Code command-filtering hook, and registers the managed MCP integrations.
+- **Optimised mode** starts llmtrim, enables RTK's Claude Code command-filtering hook, and registers the managed MCP integrations. Headroom is included only when its participation setting is enabled.
 - **Normal mode** stops the background services and removes the routes, hooks and MCP registrations managed by this plugin, returning Claude Code and Codex to their native configuration when you are not coding.
 - **Mixed mode** appears automatically when only some tools are enabled. Individual switches let you choose the exact combination.
+
+Headroom has a separate **Headroom in Optimised mode** setting. Leave it off to keep Headroom available for an explicitly launched CLI session without routing the Claude GUI or affecting the green Optimised status. Turn it on only when you want Headroom to participate in the managed client configuration.
 
 The separate statistics item combines each tool's reported token savings while keeping today, rolling-window and lifetime scopes distinct.
 

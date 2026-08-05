@@ -50,6 +50,7 @@ def default_state() -> dict[str, Any]:
     return {
         "mode": "native",
         "remote_control": True,
+        "headroom_in_mode": False,
         "components": {
             "headroom": False,
             "llmtrim": False,
@@ -135,6 +136,7 @@ def _load_state() -> dict[str, Any]:
     state = default_state()
     state.update(loaded if isinstance(loaded, dict) else {})
     state["components"] = {**default_state()["components"], **dict(state.get("components") or {})}
+    state["headroom_in_mode"] = bool(state.get("headroom_in_mode", False))
     state["restart_pending"] = dict(state.get("restart_pending") or {})
     state["busy"] = bool(state.get("busy", False))
     state["busy_action"] = str(state.get("busy_action", ""))
@@ -400,8 +402,14 @@ def current_status() -> dict[str, Any]:
     state["components"] = components
     claude_routed = "ANTHROPIC_BASE_URL" in CLAUDE_SETTINGS.read_text(encoding="utf-8")
     codex_routed = CODEX_CONFIG.exists() and "llm-stack-headroom-start" in CODEX_CONFIG.read_text(encoding="utf-8")
-    all_enabled = all(components.values()) and claude_routed and codex_routed
-    all_disabled = not any(components.values()) and not claude_routed and not codex_routed
+    included_components = {
+        key: value for key, value in components.items()
+        if key != "headroom" or state.get("headroom_in_mode", False)
+    }
+    routes_ok = not state.get("headroom_in_mode", False) or (claude_routed and codex_routed)
+    routes_off = not state.get("headroom_in_mode", False) or (not claude_routed and not codex_routed)
+    all_enabled = all(included_components.values()) and routes_ok
+    all_disabled = not any(included_components.values()) and routes_off
     state["mode"] = "optimized" if all_enabled else ("native" if all_disabled else "mixed")
     state.update(status_from_values(state))
     if state.get("restart_pending") != previous_pending or state.get("needs_restart") != previous_needs_restart:
@@ -412,29 +420,35 @@ def current_status() -> dict[str, Any]:
 def _set_mode(mode: str) -> tuple[bool, str]:
     state = _load_state()
     if mode == "optimized":
+        include_headroom = bool(state.get("headroom_in_mode", False))
         llmtrim_was_running = _llmtrim_running()
         if not llmtrim_was_running:
             _run(command_for("llmtrim", "start"), allow_failure=True)
             _run(["llmtrim", "ensure", "-q"], allow_failure=True)
-        _run(headroom_apply_command(), allow_failure=True)
-        ok, message = _run(command_for("headroom", "start"), allow_failure=True)
-        running = _headroom_running() if not ok else _wait_for_headroom()
-        if not running:
-            if not llmtrim_was_running:
-                _run(command_for("llmtrim", "stop"), allow_failure=True)
-                _run(["llmtrim", "autostart", "--off"], allow_failure=True)
-            state["mode"] = "native"
-            state["needs_restart"] = False
-            state["restart_pending"] = {}
-            state["message"] = (
-                "Headroom could not start; no optimization changes were applied"
-                + (f": {message}" if message else "")
-            )
-            _save_state(state)
-            return False, state["message"]
-        startup_note = "" if ok else "; startup health check pending"
-        _set_headroom_routes(True)
-        _set_headroom_claude_mcp(True)
+        startup_note = ""
+        if include_headroom:
+            _run(headroom_apply_command(), allow_failure=True)
+            ok, message = _run(command_for("headroom", "start"), allow_failure=True)
+            running = _headroom_running() if not ok else _wait_for_headroom()
+            if not running:
+                if not llmtrim_was_running:
+                    _run(command_for("llmtrim", "stop"), allow_failure=True)
+                    _run(["llmtrim", "autostart", "--off"], allow_failure=True)
+                state["mode"] = "native"
+                state["needs_restart"] = False
+                state["restart_pending"] = {}
+                state["message"] = (
+                    "Headroom could not start; no optimisation changes were applied"
+                    + (f": {message}" if message else "")
+                )
+                _save_state(state)
+                return False, state["message"]
+            startup_note = "" if ok else "; startup health check pending"
+            _set_headroom_routes(True)
+            _set_headroom_claude_mcp(True)
+        else:
+            _set_headroom_routes(False)
+            _set_headroom_claude_mcp(False)
         _run(["llmtrim", "autostart", "--off"], allow_failure=True)
         _set_rtk(True)
         if not state["components"].get("jcodemunch"):
@@ -442,7 +456,8 @@ def _set_mode(mode: str) -> tuple[bool, str]:
         state["remote_control"] = False
         state["mode"] = mode
         mark_restart_required(state, ["claude", "codex"])
-        state["message"] = f"Optimised mode enabled{startup_note}; relaunch Claude/Codex"
+        suffix = "; Headroom excluded" if not include_headroom else "; relaunch Claude/Codex"
+        state["message"] = f"Optimised mode enabled{startup_note}{suffix}"
     else:
         _run(command_for("headroom", "stop"), allow_failure=True)
         _set_headroom_routes(False)
@@ -463,20 +478,44 @@ def _set_mode(mode: str) -> tuple[bool, str]:
     return True, state["message"]
 
 
-def _set_headroom_only(enabled: bool) -> tuple[bool, str]:
+def _set_headroom_only(enabled: bool, *, route_clients: bool = True) -> tuple[bool, str]:
     if enabled:
         _run(headroom_apply_command(), allow_failure=True)
         ok, message = _run(command_for("headroom", "start"), allow_failure=True)
         running = _headroom_running() if not ok else _wait_for_headroom()
         if not running:
             return False, message or "Headroom could not start"
-        _set_headroom_routes(True)
-        _set_headroom_claude_mcp(True)
-        return True, "Headroom enabled; relaunch Claude/Codex"
+        if route_clients:
+            _set_headroom_routes(True)
+            _set_headroom_claude_mcp(True)
+            return True, "Headroom enabled; relaunch Claude/Codex"
+        _set_headroom_routes(False)
+        _set_headroom_claude_mcp(False)
+        return True, "Headroom CLI service enabled; GUI routing unchanged"
     _run(command_for("headroom", "stop"), allow_failure=True)
     _set_headroom_routes(False)
     _set_headroom_claude_mcp(False)
     return True, "Headroom disabled; other components unchanged"
+
+
+def toggle_headroom_participation(enabled: bool | None = None) -> tuple[bool, str]:
+    state = _load_state()
+    desired = not bool(state.get("headroom_in_mode", False)) if enabled is None else bool(enabled)
+    state["headroom_in_mode"] = desired
+    if desired:
+        message = "Headroom included in Optimised mode"
+        if state["components"].get("headroom"):
+            _set_headroom_routes(True)
+            _set_headroom_claude_mcp(True)
+            mark_restart_required(state, ["claude", "codex"])
+    else:
+        _set_headroom_routes(False)
+        _set_headroom_claude_mcp(False)
+        message = "Headroom excluded from Optimised mode; CLI use remains available"
+        mark_restart_required(state, ["claude", "codex"])
+    state["message"] = message
+    _save_state(state)
+    return True, message
 
 
 def toggle_component(component: str) -> tuple[bool, str]:
@@ -484,7 +523,7 @@ def toggle_component(component: str) -> tuple[bool, str]:
     enabled = bool(current["components"].get(component))
     state = _load_state()
     if component == "headroom":
-        ok, output = _set_headroom_only(not enabled)
+        ok, output = _set_headroom_only(not enabled, route_clients=bool(state.get("headroom_in_mode", False)))
         state["components"][component] = not enabled if ok else enabled
         mark_restart_required(state, ["claude", "codex"])
         state["message"] = output
@@ -614,6 +653,10 @@ def render_menu() -> None:
     remote = bool(state.get("remote_control"))
     remote_color = "#1D4ED8,#93C5FD" if remote else DETAIL_COLOR
     print(f"  ◉ Claude Remote Control  —  {'ON' if remote else 'OFF'} | {_swiftbar_action('remote-control')} color={remote_color} trim=false")
+    included = bool(state.get("headroom_in_mode", False))
+    included_mark = "ON" if included else "OFF"
+    included_color = TOOL_COLORS["headroom"] if included else DETAIL_COLOR
+    print(f"  Headroom in Optimised mode  —  {included_mark} | {_swiftbar_action('headroom-scope', 'off' if included else 'on')} color={included_color} trim=false")
     print("---")
     message = state.get("message", "")
     if state.get("busy"):
@@ -723,12 +766,15 @@ def main(argv: list[str]) -> int:
         ok, message = check_updates()
     elif command == "install-plugins":
         ok, message = install_plugins()
+    elif command == "headroom-scope":
+        requested = argv[1].lower() if len(argv) > 1 else "toggle"
+        ok, message = toggle_headroom_participation(None if requested == "toggle" else requested == "on")
     elif command == "open-llmtrim-watch":
         ok, message = open_terminal_tool("llmtrim")
     elif command == "open-rtk-gain":
         ok, message = open_terminal_tool("rtk")
     else:
-        print("usage: controller.py status|optimized|native|toggle <component>|install-jcodemunch|check-updates|install-plugins|open-llmtrim-watch|open-rtk-gain")
+        print("usage: controller.py status|optimized|native|toggle <component>|headroom-scope [on|off]|install-jcodemunch|check-updates|install-plugins|open-llmtrim-watch|open-rtk-gain")
         return 2
     print(message)
     return 0 if ok else 1

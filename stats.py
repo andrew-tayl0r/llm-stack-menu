@@ -318,6 +318,15 @@ def _detail_item(text: str, indent: str = "") -> str:
     return _menu_item(f"{indent}{text}", DETAIL_COLOR)
 
 
+def _headroom_metrics_enabled() -> bool:
+    state_path = Path.home() / ".llm-stack-controller" / "state.json"
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return bool(state.get("headroom_in_mode", False))
+
+
 SECTION_COLOR = "#172033,#F3F4F6"
 DETAIL_COLOR = "#334155,#D1D5DB"
 TOOL_COLORS = {
@@ -332,7 +341,13 @@ def render_menu(
     sources: list[StatsSource],
     error: str | None = None,
     lifetime_sources: list[StatsSource] | None = None,
+    *,
+    headroom_enabled: bool = True,
 ) -> str:
+    if not headroom_enabled:
+        sources = [source for source in sources if source.key != "headroom"]
+        if lifetime_sources is not None:
+            lifetime_sources = [source for source in lifetime_sources if source.key != "headroom"]
     total = _format_usd(combined_saved_usd(sources)) if sources else "—"
     total_tokens = format_tokens(combined_tokens_saved(sources)) if sources else "—"
     visible_sources = [
@@ -474,7 +489,7 @@ def collect_sources() -> tuple[list[StatsSource], list[StatsSource], str | None]
 
 def main() -> None:
     sources, lifetime_sources, error = collect_sources()
-    print(render_menu(sources, error, lifetime_sources))
+    print(render_menu(sources, error, lifetime_sources, headroom_enabled=_headroom_metrics_enabled()))
 
 
 if __name__ == "__main__":

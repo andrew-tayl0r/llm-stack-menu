@@ -233,6 +233,16 @@ class StatsRenderingTests(unittest.TestCase):
         self.assertNotIn("Check for tool updates", output)
         self.assertNotIn("Repair menu-bar plugins", output)
 
+    def test_excluded_headroom_is_not_counted_or_rendered(self):
+        sources = [
+            parse_headroom({"tokens_saved": 500, "savings_pct": 50, "tool_saved": 200, "total_requests": 2}),
+            parse_rtk({"summary": {"total_saved": 1_000, "avg_savings_pct": 90}}),
+        ]
+        output = render_menu(sources, lifetime_sources=sources, headroom_enabled=False)
+        self.assertNotIn("Headroom", output)
+        self.assertNotIn("500", output)
+        self.assertIn("RTK", output)
+
     def test_menu_shows_today_first_and_lifetime_totals_below(self):
         today_sources = [
             parse_llmtrim(
