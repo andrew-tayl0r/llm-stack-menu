@@ -1,8 +1,8 @@
 # LLM Stack Menu
 
-A pair of SwiftBar menu-bar plugins for controlling and monitoring a local LLM optimisation stack on macOS.
+SwiftBar plugins for controlling and monitoring a Claude Code-focused token-optimisation stack on macOS, with Codex support.
 
-The controller switches Headroom, llmtrim, RTK and jCodeMunch between optimised and normal modes for Claude Code and Codex. The statistics item combines each tool's reported token savings while keeping their scopes and lifetime figures separate.
+The controller switches Headroom, llmtrim, RTK and jCodeMunch between optimised and normal modes. The statistics item combines each tool's reported token savings while keeping their scopes and lifetime figures separate.
 
 ## Features
 
@@ -49,4 +49,3 @@ This repository currently reflects a personal Apple Silicon setup and contains p
 ```sh
 python3 -m unittest discover -s . -p 'test*.py'
 ```
-
