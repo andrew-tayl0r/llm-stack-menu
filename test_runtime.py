@@ -1,5 +1,6 @@
 import json
 import io
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -98,6 +99,13 @@ class RuntimeHelperTests(unittest.TestCase):
             refresh_restart_state(state)
         self.assertFalse(state["needs_restart"])
         self.assertEqual(state["restart_pending"], {})
+
+    def test_client_process_detection_finds_claude_cli(self):
+        ps_output = "1234 Wed Aug  5 13:00:00 2026 /Users/andrew/bin/claude --resume abc\n"
+        completed = subprocess.CompletedProcess(["ps"], 0, ps_output, "")
+        with patch.object(controller.subprocess, "run", return_value=completed):
+            clients = controller._client_processes()
+        self.assertEqual(clients["claude"], [{"pid": 1234, "started_at": 1785934800.0}])
 
     def test_turning_headroom_off_does_not_disable_other_components(self):
         state = default_state()

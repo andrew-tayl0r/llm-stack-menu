@@ -356,7 +356,7 @@ def _client_processes() -> dict[str, list[dict[str, float | int]]]:
         client = None
         if command.startswith("/Applications/ChatGPT.app/Contents/Resources/codex ") and " app-server" in command:
             client = "codex"
-        elif re.search(r"(?:^|/)claude(?:\\s|$)", command) and " mcp " not in command:
+        elif re.search(r"(?:^|/)claude(?:\s|$)", command) and " mcp " not in command:
             client = "claude"
         if client:
             found[client].append({"pid": pid, "started_at": started})
