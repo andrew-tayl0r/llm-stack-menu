@@ -39,6 +39,7 @@ STATE_DIR = HOME / ".llm-stack-controller"
 STATE_FILE = STATE_DIR / "state.json"
 BACKUP_DIR = STATE_DIR / "backups"
 CLAUDE_SETTINGS = HOME / ".claude" / "settings.json"
+CLAUDE_CONFIG = HOME / ".claude.json"
 CODEX_CONFIG = HOME / ".codex" / "config.toml"
 HEADROOM_PROFILE = "init-user"
 UVX = "/opt/homebrew/bin/uvx"
@@ -56,6 +57,7 @@ def default_state() -> dict[str, Any]:
             "llmtrim": False,
             "rtk": False,
             "jcodemunch": False,
+            "xcode": False,
         },
         "needs_restart": False,
         "restart_pending": {},
@@ -132,6 +134,14 @@ def enable_xcode_mcp() -> tuple[bool, str]:
             return False, f"Could not configure Xcode MCP for {client}: {output or 'command failed'}"
         results.append(client)
     return True, "Xcode MCP bridge configured for Claude Code and Codex; enable Xcode Intelligence access if prompted"
+
+
+def _set_xcode(enabled: bool) -> tuple[bool, str]:
+    if enabled:
+        return enable_xcode_mcp()
+    for command in (["claude", "mcp", "remove", "xcode"], [CODEX_BIN, "mcp", "remove", "xcode"]):
+        _run(command, allow_failure=True)
+    return True, "Xcode MCP bridge disabled for Claude Code and Codex"
 
 
 def headroom_claude_mcp_commands(action: str) -> list[str]:
@@ -415,6 +425,18 @@ def _jcodemunch_enabled() -> bool:
     return claude_ok and codex_ok and "jcodemunch" in (claude_output + codex_output)
 
 
+def _xcode_mcp_enabled() -> bool:
+    try:
+        claude_text = CLAUDE_CONFIG.read_text(encoding="utf-8")
+    except OSError:
+        claude_text = ""
+    try:
+        codex_text = CODEX_CONFIG.read_text(encoding="utf-8")
+    except OSError:
+        codex_text = ""
+    return '"xcode"' in claude_text and "mcpbridge" in claude_text and '"xcode"' in codex_text and "mcpbridge" in codex_text
+
+
 def current_status() -> dict[str, Any]:
     state = _load_state()
     previous_pending = copy.deepcopy(state.get("restart_pending"))
@@ -425,6 +447,7 @@ def current_status() -> dict[str, Any]:
     components["llmtrim"] = _llmtrim_running()
     components["rtk"] = _rtk_enabled()
     components["jcodemunch"] = _jcodemunch_enabled()
+    components["xcode"] = _xcode_mcp_enabled()
     state["components"] = components
     claude_routed = "ANTHROPIC_BASE_URL" in CLAUDE_SETTINGS.read_text(encoding="utf-8")
     codex_routed = CODEX_CONFIG.exists() and "llm-stack-headroom-start" in CODEX_CONFIG.read_text(encoding="utf-8")
@@ -479,6 +502,12 @@ def _set_mode(mode: str) -> tuple[bool, str]:
         _set_rtk(True)
         if not state["components"].get("jcodemunch"):
             _set_jcodemunch(True)
+        ok, xcode_message = _set_xcode(True)
+        if not ok:
+            state["mode"] = "mixed"
+            state["message"] = xcode_message
+            _save_state(state)
+            return False, xcode_message
         state["remote_control"] = False
         state["mode"] = mode
         mark_restart_required(state, ["claude", "codex"])
@@ -496,6 +525,7 @@ def _set_mode(mode: str) -> tuple[bool, str]:
         payload = set_headroom_plugin_enabled(payload, False)
         _write_claude(payload)
         _set_jcodemunch(False)
+        _set_xcode(False)
         state["remote_control"] = True
         state["mode"] = "native"
         mark_restart_required(state, ["claude", "codex"])
@@ -554,6 +584,13 @@ def toggle_component(component: str) -> tuple[bool, str]:
         mark_restart_required(state, ["claude", "codex"])
         state["message"] = output
         _save_state(state)
+        return ok, state["message"]
+    elif component == "xcode":
+        ok, output = _set_xcode(not enabled)
+        state["components"][component] = _xcode_mcp_enabled() if ok else enabled
+        state["message"] = output
+        mark_restart_required(state, ["claude", "codex"])
+        _save_state(state)
         return ok, output
     if component == "llmtrim":
         ok, output = _run(command_for(component, "stop" if enabled else "start"), allow_failure=True)
@@ -604,6 +641,7 @@ TOOL_COLORS = {
     "llmtrim": "#1D4ED8,#93C5FD",
     "rtk": "#15803D,#86EFAC",
     "jcodemunch": "#7E22CE,#D8B4FE",
+    "xcode": "#0E7490,#67E8F9",
 }
 
 
@@ -670,8 +708,9 @@ def render_menu() -> None:
     print("---")
     print(_menu_item("Tools", SECTION_COLOR, bold=True))
     symbols = {"headroom": "⌁", "llmtrim": "◒", "rtk": "▱", "jcodemunch": "⌘"}
-    labels = {"headroom": "Headroom", "llmtrim": "llmtrim", "rtk": "RTK · Claude hook", "jcodemunch": "jCodeMunch"}
-    for component in ("headroom", "llmtrim", "rtk", "jcodemunch"):
+    symbols["xcode"] = "⌘X"
+    labels = {"headroom": "Headroom", "llmtrim": "llmtrim", "rtk": "RTK · Claude hook", "jcodemunch": "jCodeMunch", "xcode": "Xcode MCP"}
+    for component in ("headroom", "llmtrim", "rtk", "jcodemunch", "xcode"):
         enabled = bool(state["components"].get(component))
         mark = "ON" if enabled else "OFF"
         row_color = TOOL_COLORS[component] if enabled else DETAIL_COLOR

@@ -26,7 +26,7 @@ class RuntimeHelperTests(unittest.TestCase):
         state = default_state()
         self.assertEqual(state["mode"], "native")
         self.assertFalse(state["headroom_in_mode"])
-        self.assertEqual(set(state["components"]), {"headroom", "llmtrim", "rtk", "jcodemunch"})
+        self.assertEqual(set(state["components"]), {"headroom", "llmtrim", "rtk", "jcodemunch", "xcode"})
 
     def test_atomic_json_write_round_trips(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -101,7 +101,7 @@ class RuntimeHelperTests(unittest.TestCase):
 
     def test_turning_headroom_off_does_not_disable_other_components(self):
         state = default_state()
-        state["components"] = {"headroom": True, "llmtrim": True, "rtk": True, "jcodemunch": True}
+        state["components"] = {"headroom": True, "llmtrim": True, "rtk": True, "jcodemunch": True, "xcode": True}
         current = {
             **state,
             "components": dict(state["components"]),
@@ -135,6 +135,7 @@ class RuntimeHelperTests(unittest.TestCase):
             patch.object(controller, "_llmtrim_running", return_value=True),
             patch.object(controller, "_rtk_enabled", return_value=True),
             patch.object(controller, "_jcodemunch_enabled", return_value=True),
+            patch.object(controller, "_xcode_mcp_enabled", return_value=True),
             patch.object(controller, "_save_state"),
         ):
             status = controller.current_status()
@@ -250,7 +251,7 @@ class RuntimeHelperTests(unittest.TestCase):
             "title": "◉ Native",
             "mode": "native",
             "needs_restart": False,
-            "components": {"headroom": False, "llmtrim": False, "rtk": False, "jcodemunch": False},
+            "components": {"headroom": False, "llmtrim": False, "rtk": False, "jcodemunch": False, "xcode": False},
             "remote_control": True,
             "message": "Native mode",
         }
@@ -271,6 +272,7 @@ class RuntimeHelperTests(unittest.TestCase):
         self.assertIn("Check for tool updates", output.getvalue())
         self.assertIn("Repair menu-bar plugins", output.getvalue())
         self.assertIn("Enable Xcode MCP bridge", output.getvalue())
+        self.assertIn("Xcode MCP", output.getvalue())
         self.assertIn("**Mode** | md=true color=", output.getvalue())
         self.assertIn("**Tools** | md=true color=", output.getvalue())
         self.assertIn("**Status** | md=true color=", output.getvalue())

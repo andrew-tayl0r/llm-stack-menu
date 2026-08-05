@@ -2,9 +2,9 @@
 
 SwiftBar plugins that provide menu-bar controls and live savings statistics for a Claude Code-focused token-optimisation setup on macOS, with Codex support. It is a controller for the tools you already have installed, not a replacement for Claude Code or Codex.
 
-The controller manages Headroom, llmtrim, RTK and jCodeMunch from one menu:
+The controller manages Headroom, llmtrim, RTK, jCodeMunch and the Xcode MCP bridge from one menu:
 
-- **Optimised mode** starts llmtrim, enables RTK's Claude Code command-filtering hook, and registers the managed MCP integrations. Headroom is included only when its participation setting is enabled.
+- **Optimised mode** starts llmtrim, enables RTK's Claude Code command-filtering hook, registers jCodeMunch and the Xcode MCP bridge, and includes Headroom only when its participation setting is enabled.
 - **Native mode** stops the background services and removes the routes, hooks and MCP registrations managed by this plugin, returning Claude Code and Codex to their native configuration when you are not coding.
 - **Mixed mode** appears automatically when only some tools are enabled. Individual switches let you choose the exact combination.
 
