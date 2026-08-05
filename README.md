@@ -1,13 +1,19 @@
 # LLM Stack Menu
 
-SwiftBar plugins for controlling and monitoring a Claude Code-focused token-optimisation stack on macOS, with Codex support.
+SwiftBar plugins that provide menu-bar controls and live savings statistics for a Claude Code-focused token-optimisation setup on macOS, with Codex support.
 
-The controller switches Headroom, llmtrim, RTK and jCodeMunch between optimised and normal modes. The statistics item combines each tool's reported token savings while keeping their scopes and lifetime figures separate.
+The controller manages Headroom, llmtrim, RTK and jCodeMunch from one menu:
+
+- **Optimised mode** starts Headroom and llmtrim, routes Claude Code and Codex through Headroom, enables RTK's Claude Code command-filtering hook, and registers the managed MCP integrations.
+- **Normal mode** stops the background services and removes the routes, hooks and MCP registrations managed by this plugin, returning Claude Code and Codex to their native configuration when you are not coding.
+- **Mixed mode** appears automatically when only some tools are enabled. Individual switches let you choose the exact combination.
+
+The separate statistics item combines each tool's reported token savings while keeping today, rolling-window and lifetime scopes distinct.
 
 ## Features
 
-- Optimised, mixed and normal operating modes
-- Independent tool switches
+- One-click Optimised and Normal modes
+- Mixed-state detection and independent tool switches
 - Claude remote-control routing for Headroom
 - Live llmtrim, RTK, Headroom and jCodeMunch statistics
 - Today, rolling-window and lifetime breakdowns where the tools provide them
