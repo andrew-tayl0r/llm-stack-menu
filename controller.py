@@ -708,7 +708,7 @@ def render_menu() -> None:
     print("---")
     print(_menu_item("Tools", SECTION_COLOR, bold=True))
     symbols = {"headroom": "⌁", "llmtrim": "◒", "rtk": "▱", "jcodemunch": "⌘"}
-    symbols["xcode"] = "⌘X"
+    symbols["xcode"] = "🔨"
     labels = {"headroom": "Headroom", "llmtrim": "llmtrim", "rtk": "RTK · Claude hook", "jcodemunch": "jCodeMunch", "xcode": "Xcode MCP"}
     for component in ("headroom", "llmtrim", "rtk", "jcodemunch", "xcode"):
         enabled = bool(state["components"].get(component))
