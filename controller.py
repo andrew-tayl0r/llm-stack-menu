@@ -945,6 +945,14 @@ def remove_headroom_codex_config(text: str) -> str:
     result = _remove_marked_block(result, "# --- Headroom MCP server ---", "# --- end Headroom MCP server ---")
     result = re.sub(r"(?ms)^\[mcp_servers\.headroom\]\n.*?(?=^\[|\Z)", "", result)
     result = result.replace("# --- end Headroom MCP server ---\n", "")
+    # `headroom install apply` can also write its own provider block directly
+    # (e.g. "# --- Headroom persistent provider ---"), with no matching end
+    # marker and different comment text than the controller's own templates.
+    # Strip it by content so it can't survive as a silent, unrecognized route.
+    result = re.sub(r"(?m)^# --- .*Headroom.*provider.* ---\n", "", result)
+    result = re.sub(r"(?m)^model_provider = \"headroom\"\n", "", result)
+    result = re.sub(r"(?m)^openai_base_url = \"http://127\.0\.0\.1:8787/v1\"\n", "", result)
+    result = re.sub(r"(?ms)^\[model_providers\.headroom\]\n.*?(?=^\[|\Z)", "", result)
     result = re.sub(r"\n{3,}", "\n\n", result)
     return result.lstrip("\n")
 

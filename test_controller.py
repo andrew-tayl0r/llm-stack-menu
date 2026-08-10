@@ -69,6 +69,28 @@ class ConfigTransformTests(unittest.TestCase):
         self.assertNotIn("mcp_servers.headroom", restored)
         self.assertIn("shell_environment_policy.set", restored)
 
+    def test_codex_removes_stray_provider_block_from_direct_headroom_apply(self):
+        # `headroom install apply` can write its own provider block directly,
+        # with no matching "# --- end ... ---" marker and different comment
+        # text than the controller's own templates use.
+        text = (
+            "model = \"gpt-5.6-luna\"\n\n"
+            "# --- Headroom persistent provider ---\n"
+            "model_provider = \"headroom\"\n"
+            "openai_base_url = \"http://127.0.0.1:8787/v1\"\n\n"
+            "[model_providers.headroom]\n"
+            "name = \"Headroom persistent proxy\"\n"
+            "base_url = \"http://127.0.0.1:8787/v1\"\n"
+            "supports_websockets = true\n"
+            "requires_openai_auth = true\n\n"
+            "[marketplaces.openai-bundled]\n"
+            "source_type = \"local\"\n"
+        )
+        restored = remove_headroom_codex_config(text)
+        self.assertNotIn("headroom", restored.lower())
+        self.assertIn("model = \"gpt-5.6-luna\"", restored)
+        self.assertIn("[marketplaces.openai-bundled]", restored)
+
     def test_headroom_claude_env_is_idempotent(self):
         payload = {"env": {"OTHER": "keep"}, "hooks": {"SessionStart": []}}
         once = controller._add_headroom_claude_env(payload)
