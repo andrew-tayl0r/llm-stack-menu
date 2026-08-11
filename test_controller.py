@@ -69,6 +69,35 @@ class ConfigTransformTests(unittest.TestCase):
         self.assertNotIn("mcp_servers.headroom", restored)
         self.assertIn("shell_environment_policy.set", restored)
 
+    def test_remove_headroom_claude_env_does_not_collaterally_delete_a_hook_merged_into_the_same_entry(self):
+        # set_rtk_claude_hook() reuses an existing matcher="Bash" entry rather
+        # than creating its own, so RTK's hook can end up merged into the
+        # SAME entry object as Headroom's ensure-hook. remove_headroom_claude_env
+        # must strip only Headroom's own hook item, not the whole entry --
+        # otherwise re-applying Headroom's routing silently deletes RTK's hook.
+        payload = {
+            "env": {"ANTHROPIC_BASE_URL": "http://127.0.0.1:8787", "ENABLE_TOOL_SEARCH": "true"},
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "/Users/andrew/.local/bin/headroom init hook ensure --profile init-user --marker headroom-init-claude",
+                                "timeout": 15,
+                            },
+                            {"type": "command", "command": "rtk hook claude"},
+                        ],
+                        "matcher": "Bash",
+                    },
+                ],
+            },
+        }
+        result = remove_headroom_claude_env(payload)
+        self.assertIn("rtk hook claude", str(result["hooks"]))
+        self.assertNotIn("headroom-init-claude", str(result["hooks"]))
+        self.assertNotIn("headroom init hook ensure", str(result["hooks"]))
+
     def test_codex_removes_stray_provider_block_from_direct_headroom_apply(self):
         # `headroom install apply` can write its own provider block directly,
         # with no matching "# --- end ... ---" marker and different comment
