@@ -216,37 +216,84 @@ def parse_rtk(payload: dict[str, Any], scope: str = "lifetime") -> StatsSource:
     )
 
 
+JCODEMUNCH_DAILY_STATE_FILE = Path.home() / ".llm-stack-controller" / "jcodemunch_daily.json"
+
+
+def _read_jcodemunch_daily_baseline() -> dict[str, Any]:
+    try:
+        value = json.loads(JCODEMUNCH_DAILY_STATE_FILE.read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _write_jcodemunch_daily_baseline(state: dict[str, Any]) -> None:
+    JCODEMUNCH_DAILY_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    JCODEMUNCH_DAILY_STATE_FILE.write_text(json.dumps(state), encoding="utf-8")
+
+
+def jcodemunch_daily_delta(cumulative_tokens: int, cumulative_usd: float, baseline: dict[str, Any], today: str) -> tuple[dict[str, Any], int, float]:
+    """Derive today's (Claude + Codex) savings from the ever-increasing
+    lifetime meter, since jcodemunch-mcp's own daily breakdown only covers
+    Claude Code transcripts. Rebase whenever the stored day has passed, or
+    the meter reads lower than the baseline (a reset/reinstall) -- in either
+    case there's nothing meaningful to diff against yet, so today starts at
+    zero rather than reporting a negative or stale delta.
+    """
+
+    baseline_tokens = _integer(baseline.get("baseline_tokens"))
+    baseline_usd = _number(baseline.get("baseline_usd"))
+    if baseline.get("date") != today or cumulative_tokens < baseline_tokens:
+        baseline_tokens = cumulative_tokens
+        baseline_usd = cumulative_usd
+    new_baseline = {"date": today, "baseline_tokens": baseline_tokens, "baseline_usd": baseline_usd}
+    delta_tokens = max(0, cumulative_tokens - baseline_tokens)
+    delta_usd = max(0.0, cumulative_usd - baseline_usd)
+    return new_baseline, delta_tokens, delta_usd
+
+
 def parse_jcodemunch(payload: dict[str, Any], scope: str = "lifetime") -> StatsSource:
-    totals = payload.get("totals") or {}
     if scope == "today":
+        lifetime = payload.get("lifetime") or {}
+        cumulative_tokens = _integer(lifetime.get("tokens_saved"))
+        cumulative_usd = _number(lifetime.get("usd"))
         today = date.today().isoformat()
-        totals = next((item for item in (payload.get("by_day") or []) if isinstance(item, dict) and str(item.get("date", ""))[:10] == today), {})
-    baseline = _integer(totals.get("baseline_tokens"))
-    saved = _integer(totals.get("savings_tokens"))
-    pct = saved / baseline * 100 if baseline else None
-    details = [
-        f"Calls: {_integer(totals.get('calls')):,}",
-        f"Actual tokens: {format_tokens(_integer(totals.get('actual_tokens')))}",
-        f"Baseline tokens: {format_tokens(baseline)}",
-        f"Model estimate: {payload.get('model', 'opus')}",
-    ]
-    since = (payload.get("window") or {}).get("since")
-    if since and scope != "today":
-        details.append(f"Since: {since[:10]}")
-    window_days = _integer((payload.get("window") or {}).get("days"), 30)
+        new_baseline, saved, saved_usd_value = jcodemunch_daily_delta(
+            cumulative_tokens, cumulative_usd, _read_jcodemunch_daily_baseline(), today
+        )
+        _write_jcodemunch_daily_baseline(new_baseline)
+        pct = None
+        saved_usd = saved_usd_value if saved_usd_value > 0 else None
+        details = [
+            f"Model estimate: {payload.get('model', 'opus')}",
+            "Includes Claude Code + Codex (measured against today's meter reading)",
+        ]
+        scope_label = "Today"
+    else:
+        # jcodemunch-mcp's transcript scan ("totals"/"by_day") only covers
+        # Claude Code sessions -- it cannot parse Codex's transcript format
+        # at all (verified: pointing --projects-root at Codex's own session
+        # directory returns zero calls). Its separate "lifetime" field is a
+        # live per-call meter incremented regardless of client, so it's the
+        # only genuinely cross-client (Claude + Codex) figure available.
+        lifetime = payload.get("lifetime") or {}
+        saved = _integer(lifetime.get("tokens_saved"))
+        pct = None
+        saved_usd = _number(lifetime.get("usd")) if lifetime.get("usd") is not None and _number(lifetime.get("usd")) > 0 else None
+        details = [
+            f"Model estimate: {payload.get('model', 'opus')}",
+            "Includes Claude Code + Codex (persistent per-call meter)",
+        ]
+        scope_label = "All recorded usage"
     return StatsSource(
         key="jcodemunch",
         name="jCodeMunch",
         symbol="⌘",
         tokens_saved=saved,
         savings_pct=pct,
-        saved_usd=(
-            _number(totals.get("savings_usd"))
-            if scope == "today" and totals.get("savings_usd") is not None and _number(totals.get("savings_usd")) > 0
-            else (_number(payload.get("savings_usd")) if scope != "today" and payload.get("savings_usd") is not None and _number(payload.get("savings_usd")) > 0 else None)
-        ),
+        saved_usd=saved_usd,
         detail=tuple(details),
-        scope_label="Today" if scope == "today" else ("All recorded usage" if window_days == 0 else f"Last {window_days} days"),
+        scope_label=scope_label,
     )
 
 

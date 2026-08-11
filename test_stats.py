@@ -1,10 +1,13 @@
 import unittest
 from datetime import date
+from unittest.mock import patch
 
+import stats
 from stats import (
     _decode_json_output,
     combined_saved_usd,
     format_tokens,
+    jcodemunch_daily_delta,
     parse_headroom,
     parse_jcodemunch,
     parse_llmtrim,
@@ -154,45 +157,71 @@ class StatsParsingTests(unittest.TestCase):
         rtk = parse_rtk({"summary": {"total_saved": 50, "avg_savings_pct": 5}})
         self.assertAlmostEqual(combined_saved_usd([headroom, llmtrim, rtk]), 2.2505)
 
-    def test_jcodemunch_receipt_reports_measured_savings(self):
+    def test_jcodemunch_lifetime_uses_the_cross_client_meter_not_the_claude_only_scan(self):
+        # jcodemunch-mcp's transcript scan ("totals") only covers Claude Code
+        # sessions -- it can't parse Codex's transcript format at all (verified
+        # live: pointing --projects-root at ~/.codex/sessions returns zero
+        # calls). Its separate "lifetime" field is a live per-call meter that
+        # DOES include Codex, so the lifetime scope must read from there.
         source = parse_jcodemunch(
             {
                 "totals": {"calls": 12, "actual_tokens": 800, "baseline_tokens": 10_000, "savings_tokens": 9_200},
                 "savings_usd": 0.42,
                 "model": "opus",
-                "window": {"days": 30, "since": "2026-07-06T00:00:00Z"},
+                "window": {"days": 0, "since": None},
+                "lifetime": {"tokens_saved": 131_302_860, "usd": 656.5143},
             }
         )
         self.assertEqual(source.symbol, "⌘")
-        self.assertEqual(source.tokens_saved, 9_200)
-        self.assertEqual(source.savings_pct, 92.0)
-        self.assertEqual(source.saved_usd, 0.42)
-        self.assertIn("Calls: 12", source.detail)
-
-    def test_jcodemunch_zero_day_receipt_is_labelled_all_time(self):
-        source = parse_jcodemunch(
-            {"totals": {"calls": 1, "actual_tokens": 10, "baseline_tokens": 20, "savings_tokens": 10}, "window": {"days": 0}}
-        )
+        self.assertEqual(source.tokens_saved, 131_302_860)
+        self.assertEqual(source.saved_usd, 656.5143)
         self.assertEqual(source.scope_label, "All recorded usage")
 
-    def test_jcodemunch_today_uses_the_calendar_day_row(self):
-        source = parse_jcodemunch(
-            {
-                "totals": {"calls": 100, "actual_tokens": 20_000, "baseline_tokens": 30_000, "savings_tokens": 10_000},
-                "savings_usd": 1.2,
-                "model": "opus",
-                "window": {"days": 30, "since": "2026-07-06T00:00:00Z"},
-                "by_day": [
-                    {"date": date.today().isoformat(), "calls": 2, "actual_tokens": 800, "baseline_tokens": 1_000, "savings_tokens": 200}
-                ],
-            },
-            scope="today",
-        )
-        self.assertEqual(source.tokens_saved, 200)
-        self.assertEqual(source.savings_pct, 20.0)
+    def test_jcodemunch_lifetime_handles_a_missing_meter_gracefully(self):
+        source = parse_jcodemunch({"totals": {"calls": 1, "savings_tokens": 10}, "window": {"days": 0}})
+        self.assertEqual(source.tokens_saved, 0)
+        self.assertIsNone(source.saved_usd)
+
+    def test_jcodemunch_today_diffs_the_lifetime_meter_against_a_stored_baseline(self):
+        # by_day (Claude-only transcript scan) is no longer used for "today" --
+        # it's derived from the same cross-client lifetime meter as the
+        # lifetime scope, diffed against a self-resetting daily baseline, so
+        # Codex calls made today are counted too.
+        with (
+            patch.object(stats, "_read_jcodemunch_daily_baseline", return_value={"date": date.today().isoformat(), "baseline_tokens": 131_300_000, "baseline_usd": 656.0}),
+            patch.object(stats, "_write_jcodemunch_daily_baseline") as write_baseline,
+        ):
+            source = parse_jcodemunch(
+                {"model": "opus", "lifetime": {"tokens_saved": 131_302_860, "usd": 656.5143}},
+                scope="today",
+            )
+        self.assertEqual(source.tokens_saved, 2_860)
+        self.assertAlmostEqual(source.saved_usd, 0.5143, places=4)
         self.assertEqual(source.scope_label, "Today")
-        self.assertIn("Calls: 2", source.detail)
-        self.assertNotIn("Since:", " ".join(source.detail))
+        write_baseline.assert_called_once()
+
+    def test_jcodemunch_daily_delta_rebases_on_a_new_day(self):
+        baseline = {"date": "2026-08-10", "baseline_tokens": 100, "baseline_usd": 1.0}
+        new_baseline, tokens, usd = jcodemunch_daily_delta(500, 5.0, baseline, "2026-08-11")
+        self.assertEqual(new_baseline, {"date": "2026-08-11", "baseline_tokens": 500, "baseline_usd": 5.0})
+        self.assertEqual(tokens, 0)
+        self.assertEqual(usd, 0.0)
+
+    def test_jcodemunch_daily_delta_rebases_when_the_meter_goes_backwards(self):
+        # A reinstall/reset of the meter would otherwise show a huge negative
+        # "today" figure -- treat it as a fresh baseline instead.
+        baseline = {"date": "2026-08-11", "baseline_tokens": 1_000_000, "baseline_usd": 50.0}
+        new_baseline, tokens, usd = jcodemunch_daily_delta(10, 0.1, baseline, "2026-08-11")
+        self.assertEqual(new_baseline, {"date": "2026-08-11", "baseline_tokens": 10, "baseline_usd": 0.1})
+        self.assertEqual(tokens, 0)
+        self.assertEqual(usd, 0.0)
+
+    def test_jcodemunch_daily_delta_accumulates_within_the_same_day(self):
+        baseline = {"date": "2026-08-11", "baseline_tokens": 1_000, "baseline_usd": 10.0}
+        new_baseline, tokens, usd = jcodemunch_daily_delta(1_500, 12.5, baseline, "2026-08-11")
+        self.assertEqual(new_baseline, baseline)
+        self.assertEqual(tokens, 500)
+        self.assertEqual(usd, 2.5)
 
 
 class StatsRenderingTests(unittest.TestCase):
@@ -315,19 +344,24 @@ class StatsRenderingTests(unittest.TestCase):
         self.assertIn('    opus  —  1 requests · 0.0% · $0.00 | color=#334155,#D1D5DB trim=false\n \n⌘ jCodeMunch', output)
 
     def test_rtk_and_jcodemunch_show_compact_lifetime_blocks(self):
+        with (
+            patch.object(stats, "_read_jcodemunch_daily_baseline", return_value={}),
+            patch.object(stats, "_write_jcodemunch_daily_baseline"),
+        ):
+            today_jcodemunch = parse_jcodemunch({"lifetime": {"tokens_saved": 10, "usd": 0.01}}, scope="today")
         today_sources = [
             parse_rtk({"summary": {}, "daily": [{"date": date.today().isoformat(), "commands": 2, "input_tokens": 100, "output_tokens": 10, "saved_tokens": 80, "savings_pct": 80}]}, scope="today"),
-            parse_jcodemunch({"totals": {}, "by_day": [{"date": date.today().isoformat(), "calls": 1, "actual_tokens": 10, "baseline_tokens": 20, "savings_tokens": 10}], "window": {"days": 0}}, scope="today"),
+            today_jcodemunch,
         ]
         lifetime_sources = [
             parse_rtk({"summary": {"total_commands": 20, "total_input": 1_000, "total_output": 100, "total_saved": 800, "avg_savings_pct": 80}}),
-            parse_jcodemunch({"totals": {"calls": 5, "actual_tokens": 50, "baseline_tokens": 100, "savings_tokens": 50}, "window": {"days": 0}}),
+            parse_jcodemunch({"totals": {"calls": 5, "actual_tokens": 50, "baseline_tokens": 100, "savings_tokens": 50}, "window": {"days": 0}, "lifetime": {"tokens_saved": 900, "usd": 3.6}}),
         ]
         output = render_menu(today_sources, lifetime_sources=lifetime_sources)
         self.assertIn("  **Lifetime** | md=true color=", output)
         self.assertIn('    Saved  —  800 · 80.0% | color=', output)
         self.assertIn('    Commands  —  20 | color=', output)
-        self.assertIn('    Calls  —  5 | color=', output)
+        self.assertIn("Saved  —  900 · —", output)
 
     def test_nested_stat_rows_do_not_use_markdown_code_indentation(self):
         output = render_menu([
@@ -373,7 +407,10 @@ class StatsRenderingTests(unittest.TestCase):
             parse_rtk({"summary": {}}),
             parse_jcodemunch({"totals": {}, "window": {"days": 30}}),
         ]
-        self.assertEqual([source.scope_label for source in sources], ["Last 168 hours", "Lifetime", "Lifetime", "Last 30 days"])
+        # jcodemunch's non-today scope always reflects the cross-client
+        # lifetime meter now (not a Claude-only transcript window), so its
+        # label no longer varies with window.days.
+        self.assertEqual([source.scope_label for source in sources], ["Last 168 hours", "Lifetime", "Lifetime", "All recorded usage"])
 
     def test_detail_sections_have_non_separator_spacing(self):
         source = parse_llmtrim(
