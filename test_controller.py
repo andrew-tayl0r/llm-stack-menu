@@ -152,6 +152,29 @@ class ConfigTransformTests(unittest.TestCase):
         with patch.object(controller, "_run", return_value=(True, "Status:     running\nHealthy:    no")):
             self.assertTrue(controller._headroom_running())
 
+    def test_headroom_routed_reflects_client_config_not_service_state(self):
+        with (
+            patch.object(controller, "CLAUDE_SETTINGS") as claude_settings,
+            patch.object(controller, "CODEX_CONFIG") as codex_config,
+        ):
+            claude_settings.read_text.return_value = '{"env": {"ANTHROPIC_BASE_URL": "http://127.0.0.1:8787"}}'
+            codex_config.exists.return_value = False
+            self.assertTrue(controller._headroom_routed())
+
+            claude_settings.read_text.return_value = "{}"
+            codex_config.exists.return_value = False
+            self.assertFalse(controller._headroom_routed())
+
+    def test_enabling_headroom_routing_refuses_when_service_is_not_running(self):
+        with (
+            patch.object(controller, "_headroom_running", return_value=False),
+            patch.object(controller, "_set_headroom_routes") as routes,
+        ):
+            ok, message = controller._set_headroom_only(True, route_clients=True)
+        self.assertFalse(ok)
+        self.assertIn("isn't running", message)
+        routes.assert_not_called()
+
     def test_status_title_uses_compact_symbol(self):
         self.assertEqual(status_from_values({"mode": "optimized"})["title"], "◈ Optimised")
         self.assertEqual(status_from_values({"mode": "native"})["title"], "◉ Native")
