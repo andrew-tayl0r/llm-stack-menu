@@ -251,7 +251,12 @@ class RuntimeHelperTests(unittest.TestCase):
         self.assertIn(["llmtrim", "start"], commands)
         running.assert_called_once()
 
-    def test_remote_control_only_removes_claude_route(self):
+    def test_remote_control_exempts_both_claude_and_codex(self):
+        # Previously this only ever touched Claude (codex=False hardcoded),
+        # so Codex had no way to opt out of Headroom routing at all -- which
+        # broke Codex's own remote/mobile session bridge whenever Headroom
+        # routing was on. Combined into one control: no case exists where
+        # you'd want exactly one client exempt and not the other.
         state = default_state()
         state["remote_control"] = False
         with (
@@ -260,9 +265,24 @@ class RuntimeHelperTests(unittest.TestCase):
             patch.object(controller, "_headroom_running", return_value=True),
             patch.object(controller, "_set_headroom_routes") as set_routes,
         ):
-            ok, _ = controller.set_remote_control(True)
+            ok, message = controller.set_remote_control(True)
         self.assertTrue(ok)
-        set_routes.assert_called_once_with(False, claude=True, codex=False)
+        set_routes.assert_called_once_with(False, claude=True, codex=True)
+        self.assertIn("Claude/Codex", message)
+
+    def test_remote_control_restores_routing_for_both_only_when_headroom_is_running(self):
+        state = default_state()
+        state["remote_control"] = True
+        with (
+            patch.object(controller, "_load_state", return_value=state),
+            patch.object(controller, "_save_state"),
+            patch.object(controller, "_headroom_running", return_value=False),
+            patch.object(controller, "_set_headroom_routes") as set_routes,
+        ):
+            ok, message = controller.set_remote_control(False)
+        self.assertFalse(ok)
+        set_routes.assert_not_called()
+        self.assertIn("Start Headroom", message)
 
     def test_menu_names_the_two_user_modes(self):
         state = {
@@ -303,7 +323,7 @@ class RuntimeHelperTests(unittest.TestCase):
         self.assertLess(rendered.index("GUIs"), rendered.index("Maintenance"))
         self.assertIn('  Current  —  Native | color=', rendered)
         self.assertIn('  ⌁ Headroom  —  OFF |', rendered)
-        self.assertIn('  ◉ Claude Remote Control  —  ON |', rendered)
+        self.assertIn('  ◉ Remote Control  —  ON |', rendered)
         self.assertIn("Include Headroom in Optimised mode", rendered)
         self.assertLess(rendered.index("Maintenance"), rendered.index("Settings"))
         self.assertNotIn('badge=', rendered)

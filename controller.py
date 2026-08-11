@@ -621,20 +621,29 @@ def toggle_component(component: str) -> tuple[bool, str]:
 
 
 def set_remote_control(enabled: bool) -> tuple[bool, str]:
+    """Exempts both Claude and Codex from Headroom routing together.
+
+    Previously this only ever touched Claude (codex=False, hardcoded), so
+    Codex had no way to opt out of Headroom routing at all -- which broke
+    Codex's own remote/mobile session bridge whenever Headroom routing was
+    on. Combined into one control since a per-client split only adds
+    ambiguity: there's no case where you'd want exactly one client exempt.
+    """
+
     state = _load_state()
     headroom_on = _headroom_running()
     if enabled:
-        _set_headroom_routes(False, claude=True, codex=False)
+        _set_headroom_routes(False, claude=True, codex=True)
         state["remote_control"] = True
-        mark_restart_required(state, ["claude"])
-        state["message"] = "Claude Remote Control enabled; relaunch Claude"
+        mark_restart_required(state, ["claude", "codex"])
+        state["message"] = "Remote Control enabled; relaunch Claude/Codex"
     elif headroom_on:
-        _set_headroom_routes(True, claude=True, codex=False)
+        _set_headroom_routes(True, claude=True, codex=True)
         state["remote_control"] = False
-        mark_restart_required(state, ["claude"])
-        state["message"] = "Claude Headroom routing restored; relaunch Claude"
+        mark_restart_required(state, ["claude", "codex"])
+        state["message"] = "Headroom routing restored; relaunch Claude/Codex"
     else:
-        state["message"] = "Start Headroom before disabling Native Claude mode"
+        state["message"] = "Start Headroom before disabling Native mode"
         _save_state(state)
         return False, state["message"]
     _save_state(state)
@@ -741,9 +750,11 @@ def render_menu() -> None:
             row_color = WARNING_COLOR
             suffix = f"  ·  ⚠ {component_errors[component]}"
         print(f"  {symbols[component]} {labels[component]}  —  {mark}{suffix} | {_swiftbar_action('toggle', component)} color={row_color} trim=false")
+    print("---")
+    print(_menu_item("Remote Control", SECTION_COLOR, bold=True))
     remote = bool(state.get("remote_control"))
     remote_color = "#FF9F0A,#FFD60A" if remote else DETAIL_COLOR
-    print(f"  ◉ Claude Remote Control  —  {'ON' if remote else 'OFF'} | {_swiftbar_action('remote-control')} color={remote_color} trim=false")
+    print(f"  ◉ Remote Control  —  {'ON' if remote else 'OFF'} | {_swiftbar_action('remote-control')} color={remote_color} trim=false")
     print("---")
     message = state.get("message", "")
     if state.get("busy"):
@@ -803,7 +814,7 @@ def _friendly_action_label(action: str) -> str:
     extra_labels = {
         "optimized": "Optimised mode",
         "native": "Native mode",
-        "remote-control": "Claude Remote Control",
+        "remote-control": "Remote Control",
         "headroom-scope": "Headroom scope",
         "enable-xcode-mcp": "Xcode MCP",
     }
