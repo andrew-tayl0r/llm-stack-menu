@@ -11,7 +11,6 @@ import controller
 from controller import (
     atomic_json_write,
     command_for,
-    headroom_apply_command,
     default_state,
     mcp_commands,
     xcode_mcp_commands,
@@ -38,16 +37,13 @@ class RuntimeHelperTests(unittest.TestCase):
             self.assertEqual(json.loads(path.read_text()), {"mode": "optimized"})
 
     def test_runtime_commands_are_explicit(self):
-        self.assertEqual(command_for("headroom", "start"), ["headroom", "install", "start", "--profile", "init-user"])
         self.assertEqual(command_for("llmtrim", "stop"), ["llmtrim", "stop"])
-
-    def test_headroom_apply_command_recreates_the_user_service(self):
-        command = headroom_apply_command()
-        self.assertEqual(command[:4], ["headroom", "install", "apply", "--profile"])
-        self.assertIn("--providers", command)
-        self.assertIn("manual", command)
-        self.assertIn("--target", command)
-        self.assertIn("claude", command)
+        # headroom is deliberately unsupported here: the controller must never
+        # apply/start/stop the always-on, externally-managed persistent
+        # service (see HEADROOM_PROFILE) -- only check its status and toggle
+        # client routing.
+        with self.assertRaises(ValueError):
+            command_for("headroom", "start")
 
     def test_mcp_commands_use_uvx_without_hooks(self):
         commands = mcp_commands("add")
@@ -141,7 +137,9 @@ class RuntimeHelperTests(unittest.TestCase):
         ):
             ok, _ = controller.toggle_component("headroom")
         self.assertTrue(ok)
-        run.assert_called_once_with(["headroom", "install", "stop", "--profile", "init-user"], allow_failure=True)
+        # Disabling only unrotes clients -- the always-on persistent service
+        # must never be started/stopped by the controller.
+        run.assert_not_called()
         routes.assert_called_once_with(False)
         mcp.assert_called_once_with(False)
         self.assertTrue(state["components"]["llmtrim"])
@@ -153,7 +151,7 @@ class RuntimeHelperTests(unittest.TestCase):
         state["headroom_in_mode"] = False
         with (
             patch.object(controller, "_load_state", return_value=state),
-            patch.object(controller, "_headroom_running", return_value=False),
+            patch.object(controller, "_headroom_routed", return_value=False),
             patch.object(controller, "_llmtrim_running", return_value=True),
             patch.object(controller, "_rtk_enabled", return_value=True),
             patch.object(controller, "_jcodemunch_enabled", return_value=True),
@@ -187,28 +185,28 @@ class RuntimeHelperTests(unittest.TestCase):
         )
         self.assertEqual(headroom_claude_mcp_commands("remove"), ["claude", "mcp", "remove", "headroom"])
 
-    def test_optimized_mode_continues_when_service_runs_but_readiness_times_out(self):
+    def test_optimized_mode_routes_headroom_immediately_when_already_running(self):
+        # No apply/start/wait step anymore -- the persistent service is
+        # always-on and externally managed, so enabling routing is a single
+        # synchronous health check plus a config write.
         state = default_state()
         state["headroom_in_mode"] = True
-
-        def fake_run(command, *, allow_failure=False):
-            if command[:3] == ["headroom", "install", "start"]:
-                return False, "Deployment did not become ready after start."
-            return True, ""
 
         with (
             patch.object(controller, "_load_state", return_value=state),
             patch.object(controller, "_save_state"),
-            patch.object(controller, "_run", side_effect=fake_run),
+            patch.object(controller, "_run", return_value=(True, "")),
             patch.object(controller, "_headroom_running", return_value=True),
-            patch.object(controller, "_set_headroom_routes"),
+            patch.object(controller, "_set_headroom_routes") as set_routes,
+            patch.object(controller, "_set_headroom_claude_mcp"),
             patch.object(controller, "_set_rtk"),
         ):
             ok, message = controller._set_mode("optimized")
         self.assertTrue(ok)
         self.assertIn("relaunch Claude/Codex", message)
+        set_routes.assert_called_once_with(True)
 
-    def test_optimized_mode_reports_start_failure_without_routing_clients(self):
+    def test_optimized_mode_reports_failure_without_routing_when_service_is_down(self):
         state = default_state()
         state["headroom_in_mode"] = True
 
@@ -216,18 +214,18 @@ class RuntimeHelperTests(unittest.TestCase):
             patch.object(controller, "_load_state", return_value=state),
             patch.object(controller, "_save_state") as save_state,
             patch.object(controller, "_run", return_value=(True, "")),
-            patch.object(controller, "_wait_for_headroom", return_value=False),
+            patch.object(controller, "_headroom_running", return_value=False),
             patch.object(controller, "_set_headroom_routes") as set_routes,
         ):
             ok, message = controller._set_mode("optimized")
 
         self.assertFalse(ok)
-        self.assertIn("Headroom could not start", message)
+        self.assertIn("isn't running", message)
         save_state.assert_called_once()
         set_routes.assert_not_called()
         self.assertEqual(state["mode"], "native")
 
-    def test_optimized_mode_starts_llmtrim_before_headroom(self):
+    def test_optimized_mode_starts_llmtrim_and_checks_headroom_health(self):
         state = default_state()
         state["headroom_in_mode"] = True
         commands = []
@@ -241,7 +239,7 @@ class RuntimeHelperTests(unittest.TestCase):
             patch.object(controller, "_save_state"),
             patch.object(controller, "_run", side_effect=fake_run),
             patch.object(controller, "_llmtrim_running", return_value=False),
-            patch.object(controller, "_wait_for_headroom", return_value=True),
+            patch.object(controller, "_headroom_running", return_value=True) as running,
             patch.object(controller, "_set_headroom_routes"),
             patch.object(controller, "_set_headroom_claude_mcp"),
             patch.object(controller, "_set_rtk"),
@@ -250,10 +248,8 @@ class RuntimeHelperTests(unittest.TestCase):
             ok, _ = controller._set_mode("optimized")
 
         self.assertTrue(ok)
-        self.assertLess(
-            commands.index(["llmtrim", "start"]),
-            commands.index(["headroom", "install", "start", "--profile", "init-user"]),
-        )
+        self.assertIn(["llmtrim", "start"], commands)
+        running.assert_called_once()
 
     def test_remote_control_only_removes_claude_route(self):
         state = default_state()
@@ -410,9 +406,9 @@ class RuntimeHelperTests(unittest.TestCase):
             render_menu()
         rendered = output.getvalue()
         self.assertIn("start failed: exit 1", rendered)
-        self.assertIn("Off", rendered)
-        self.assertIn("RTK · Claude hook", rendered)
-        self.assertIn("Headroom", rendered)
+        # The error shows in Status, attributed to the component, not just a
+        # generic "X is off" restatement of what the Tools row already shows.
+        self.assertIn("RTK · Claude hook: start failed: exit 1", rendered)
 
     def test_menu_shows_turning_on_progress_for_the_busy_component(self):
         state = {

@@ -12,7 +12,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -43,7 +42,14 @@ BACKUP_DIR = STATE_DIR / "backups"
 CLAUDE_SETTINGS = HOME / ".claude" / "settings.json"
 CLAUDE_CONFIG = HOME / ".claude.json"
 CODEX_CONFIG = HOME / ".codex" / "config.toml"
-HEADROOM_PROFILE = "init-user"
+# "default" is the always-on persistent service (launchd RunAtLoad+KeepAlive)
+# that the Headroom Claude Code plugin itself depends on for its MCP tools.
+# The controller only ever reads its status here — it must never apply,
+# start, or stop this deployment. A previous "init-user" profile tried to run
+# a second persistent-service on the same port and permanently lost the
+# race (crash-looping with "address already in use"), which is what made
+# every Headroom toggle click appear to silently fail.
+HEADROOM_PROFILE = "default"
 UVX = "/opt/homebrew/bin/uvx"
 HEADROOM_BIN = "/Users/andrew/.local/bin/headroom"
 CODEX_BIN = "/Applications/ChatGPT.app/Contents/Resources/codex"
@@ -92,20 +98,9 @@ def atomic_json_write(path: Path, payload: dict[str, Any]) -> None:
 
 
 def command_for(component: str, action: str) -> list[str]:
-    if component == "headroom":
-        return ["headroom", "install", action, "--profile", HEADROOM_PROFILE]
     if component == "llmtrim":
         return ["llmtrim", action]
     raise ValueError(f"Unsupported runtime component: {component}")
-
-
-def headroom_apply_command() -> list[str]:
-    return [
-        "headroom", "install", "apply", "--profile", HEADROOM_PROFILE,
-        "--preset", "persistent-service", "--runtime", "python", "--scope", "user",
-        "--providers", "manual", "--target", "claude", "--backend", "anthropic",
-        "--port", "8787", "--no-telemetry", "--code-aware",
-    ]
 
 
 def mcp_commands(action: str) -> list[list[str]]:
@@ -336,6 +331,23 @@ def _headroom_running() -> bool:
     return ok and "Status:     running" in output
 
 
+def _headroom_routed() -> bool:
+    """Whether Claude and/or Codex are currently wired to route through Headroom.
+
+    The Tools row reflects this rather than the service's own running state:
+    the persistent service is always-on and externally managed, so the only
+    thing this controller actually toggles is whether client traffic is
+    routed through it.
+    """
+
+    try:
+        claude_routed = "ANTHROPIC_BASE_URL" in CLAUDE_SETTINGS.read_text(encoding="utf-8")
+    except OSError:
+        claude_routed = False
+    codex_routed = CODEX_CONFIG.exists() and "llm-stack-headroom-start" in CODEX_CONFIG.read_text(encoding="utf-8")
+    return claude_routed or codex_routed
+
+
 def _client_processes() -> dict[str, list[dict[str, float | int]]]:
     """Return the long-lived Claude/Codex client processes and start times."""
 
@@ -401,17 +413,6 @@ def refresh_restart_state(state: dict[str, Any]) -> dict[str, Any]:
     return state
 
 
-def _wait_for_headroom(timeout: float = 8.0) -> bool:
-    """Wait briefly for the user service to become running after start."""
-
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if _headroom_running():
-            return True
-        time.sleep(0.5)
-    return _headroom_running()
-
-
 def _llmtrim_running() -> bool:
     ok, output = _run(["llmtrim", "status", "--json"], allow_failure=True)
     if not ok:
@@ -453,7 +454,7 @@ def current_status() -> dict[str, Any]:
     previous_needs_restart = state.get("needs_restart")
     refresh_restart_state(state)
     components = state["components"]
-    components["headroom"] = _headroom_running()
+    components["headroom"] = _headroom_routed()
     components["llmtrim"] = _llmtrim_running()
     components["rtk"] = _rtk_enabled()
     components["jcodemunch"] = _jcodemunch_enabled()
@@ -484,12 +485,8 @@ def _set_mode(mode: str) -> tuple[bool, str]:
         if not llmtrim_was_running:
             _run(command_for("llmtrim", "start"), allow_failure=True)
             _run(["llmtrim", "ensure", "-q"], allow_failure=True)
-        startup_note = ""
         if include_headroom:
-            _run(headroom_apply_command(), allow_failure=True)
-            ok, message = _run(command_for("headroom", "start"), allow_failure=True)
-            running = _headroom_running() if not ok else _wait_for_headroom()
-            if not running:
+            if not _headroom_running():
                 if not llmtrim_was_running:
                     _run(command_for("llmtrim", "stop"), allow_failure=True)
                     _run(["llmtrim", "autostart", "--off"], allow_failure=True)
@@ -497,12 +494,11 @@ def _set_mode(mode: str) -> tuple[bool, str]:
                 state["needs_restart"] = False
                 state["restart_pending"] = {}
                 state["message"] = (
-                    "Headroom could not start; no optimisation changes were applied"
-                    + (f": {message}" if message else "")
+                    "Headroom's persistent service isn't running (profile 'default'); "
+                    "no optimisation changes were applied"
                 )
                 _save_state(state)
                 return False, state["message"]
-            startup_note = "" if ok else "; startup health check pending"
             _set_headroom_routes(True)
             _set_headroom_claude_mcp(True)
         else:
@@ -522,9 +518,8 @@ def _set_mode(mode: str) -> tuple[bool, str]:
         state["mode"] = mode
         mark_restart_required(state, ["claude", "codex"])
         suffix = "; Headroom excluded" if not include_headroom else "; relaunch Claude/Codex"
-        state["message"] = f"Optimised mode enabled{startup_note}{suffix}"
+        state["message"] = f"Optimised mode enabled{suffix}"
     else:
-        _run(command_for("headroom", "stop"), allow_failure=True)
         _set_headroom_routes(False)
         _set_headroom_claude_mcp(False)
         _run(command_for("llmtrim", "stop"), allow_failure=True)
@@ -545,23 +540,23 @@ def _set_mode(mode: str) -> tuple[bool, str]:
 
 
 def _set_headroom_only(enabled: bool, *, route_clients: bool = True) -> tuple[bool, str]:
+    """Enable/disable Headroom routing. Never starts, stops, or applies the
+    persistent service itself -- it's always-on and externally managed (see
+    HEADROOM_PROFILE)."""
+
     if enabled:
-        _run(headroom_apply_command(), allow_failure=True)
-        ok, message = _run(command_for("headroom", "start"), allow_failure=True)
-        running = _headroom_running() if not ok else _wait_for_headroom()
-        if not running:
-            return False, message or "Headroom could not start"
+        if not _headroom_running():
+            return False, "Headroom's persistent service isn't running (profile 'default') — start it separately, then try again"
         if route_clients:
             _set_headroom_routes(True)
             _set_headroom_claude_mcp(True)
-            return True, "Headroom enabled; relaunch Claude/Codex"
+            return True, "Headroom routing enabled; relaunch Claude/Codex"
         _set_headroom_routes(False)
         _set_headroom_claude_mcp(False)
-        return True, "Headroom CLI service enabled; GUI routing unchanged"
-    _run(command_for("headroom", "stop"), allow_failure=True)
+        return True, "Headroom available; GUI routing unchanged"
     _set_headroom_routes(False)
     _set_headroom_claude_mcp(False)
-    return True, "Headroom disabled; other components unchanged"
+    return True, "Headroom routing disabled; the persistent service keeps running"
 
 
 def toggle_headroom_participation(enabled: bool | None = None) -> tuple[bool, str]:
@@ -589,8 +584,10 @@ def toggle_component(component: str) -> tuple[bool, str]:
     enabled = bool(current["components"].get(component))
     state = _load_state()
     if component == "headroom":
-        ok, output = _set_headroom_only(not enabled, route_clients=bool(state.get("headroom_in_mode", False)))
-        state["components"][component] = not enabled if ok else enabled
+        # This row reflects and controls routing (see _headroom_routed), not
+        # the always-on persistent service's own lifecycle.
+        ok, output = _set_headroom_only(not enabled, route_clients=True)
+        state["components"][component] = _headroom_routed() if ok else enabled
         mark_restart_required(state, ["claude", "codex"])
         state["message"] = output
         _save_state(state)
@@ -732,12 +729,9 @@ def render_menu() -> None:
     labels = COMPONENT_LABELS
     busy_action = state.get("busy_action") or ""
     component_errors = state.get("component_errors") or {}
-    off_components = []
     for component in ("headroom", "llmtrim", "rtk", "jcodemunch", "xcode"):
         enabled = bool(state["components"].get(component))
         mark = "ON" if enabled else "OFF"
-        if not enabled:
-            off_components.append(labels[component])
         row_color = TOOL_COLORS[component] if enabled else DETAIL_COLOR
         suffix = ""
         if state.get("busy") and busy_action == labels[component]:
@@ -761,8 +755,13 @@ def render_menu() -> None:
     print(_menu_item("Status", SECTION_COLOR, bold=True))
     status_color = "#C2410C,#FDBA74" if state.get("busy") or pending else DETAIL_COLOR
     print(_menu_item(f"  {message}", status_color))
-    if off_components and state["mode"] != "native":
-        print(_menu_item(f"  Off  —  {', '.join(off_components)}", DETAIL_COLOR))
+    # Surface real transient/error detail here rather than restating what's
+    # already visible as OFF on each Tools row.
+    for component in ("headroom", "llmtrim", "rtk", "jcodemunch", "xcode"):
+        if state.get("busy") and busy_action == labels[component]:
+            print(_menu_item(f"  {labels[component]}: turning {'on' if not state['components'].get(component) else 'off'}…", WARNING_COLOR))
+        elif component_errors.get(component):
+            print(_menu_item(f"  {labels[component]}: {component_errors[component]}", WARNING_COLOR))
     print("---")
     print(_menu_item("GUIs", SECTION_COLOR, bold=True))
     print("  Headroom Dashboard | bash=/usr/bin/open param1=-a param2=Safari param3=http://127.0.0.1:8787/dashboard terminal=false color=" + DETAIL_COLOR + " trim=false")
