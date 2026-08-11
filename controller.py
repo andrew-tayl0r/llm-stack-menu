@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import copy
+import fcntl
 import json
 import os
 import re
@@ -37,6 +38,7 @@ args = ["mcp", "serve"]
 HOME = Path.home()
 STATE_DIR = HOME / ".llm-stack-controller"
 STATE_FILE = STATE_DIR / "state.json"
+LOCK_FILE = STATE_DIR / "controller.lock"
 BACKUP_DIR = STATE_DIR / "backups"
 CLAUDE_SETTINGS = HOME / ".claude" / "settings.json"
 CLAUDE_CONFIG = HOME / ".claude.json"
@@ -64,6 +66,13 @@ def default_state() -> dict[str, Any]:
         "busy": False,
         "busy_action": "",
         "message": "Native mode",
+        "component_errors": {
+            "headroom": None,
+            "llmtrim": None,
+            "rtk": None,
+            "jcodemunch": None,
+            "xcode": None,
+        },
     }
 
 
@@ -172,6 +181,7 @@ def _load_state() -> dict[str, Any]:
     state = default_state()
     state.update(loaded if isinstance(loaded, dict) else {})
     state["components"] = {**default_state()["components"], **dict(state.get("components") or {})}
+    state["component_errors"] = {**default_state()["component_errors"], **dict(state.get("component_errors") or {})}
     state["headroom_in_mode"] = bool(state.get("headroom_in_mode", False))
     state["restart_pending"] = dict(state.get("restart_pending") or {})
     state["busy"] = bool(state.get("busy", False))
@@ -634,6 +644,16 @@ def set_remote_control(enabled: bool) -> tuple[bool, str]:
     return True, state["message"]
 
 
+COMPONENT_LABELS = {
+    "headroom": "Headroom",
+    "llmtrim": "llmtrim",
+    "rtk": "RTK · Claude hook",
+    "jcodemunch": "jCodeMunch",
+    "xcode": "Xcode MCP",
+}
+
+WARNING_COLOR = "#C2410C,#FDBA74"
+
 SECTION_COLOR = "#172033,#F3F4F6"
 DETAIL_COLOR = "#334155,#D1D5DB"
 TOOL_COLORS = {
@@ -709,19 +729,31 @@ def render_menu() -> None:
     print(_menu_item("Tools", SECTION_COLOR, bold=True))
     symbols = {"headroom": "⌁", "llmtrim": "◒", "rtk": "▱", "jcodemunch": "⌘"}
     symbols["xcode"] = "⚙︎"
-    labels = {"headroom": "Headroom", "llmtrim": "llmtrim", "rtk": "RTK · Claude hook", "jcodemunch": "jCodeMunch", "xcode": "Xcode MCP"}
+    labels = COMPONENT_LABELS
+    busy_action = state.get("busy_action") or ""
+    component_errors = state.get("component_errors") or {}
+    off_components = []
     for component in ("headroom", "llmtrim", "rtk", "jcodemunch", "xcode"):
         enabled = bool(state["components"].get(component))
         mark = "ON" if enabled else "OFF"
+        if not enabled:
+            off_components.append(labels[component])
         row_color = TOOL_COLORS[component] if enabled else DETAIL_COLOR
-        print(f"  {symbols[component]} {labels[component]}  —  {mark} | {_swiftbar_action('toggle', component)} color={row_color} trim=false")
+        suffix = ""
+        if state.get("busy") and busy_action == labels[component]:
+            row_color = WARNING_COLOR
+            suffix = "  ·  ⧖ working…"
+        elif component_errors.get(component):
+            row_color = WARNING_COLOR
+            suffix = f"  ·  ⚠ {component_errors[component]}"
+        print(f"  {symbols[component]} {labels[component]}  —  {mark}{suffix} | {_swiftbar_action('toggle', component)} color={row_color} trim=false")
     remote = bool(state.get("remote_control"))
     remote_color = "#FF9F0A,#FFD60A" if remote else DETAIL_COLOR
     print(f"  ◉ Claude Remote Control  —  {'ON' if remote else 'OFF'} | {_swiftbar_action('remote-control')} color={remote_color} trim=false")
     print("---")
     message = state.get("message", "")
     if state.get("busy"):
-        message = f"Working: {state.get('busy_action') or 'processing'}…"
+        message = f"Working: {busy_action or 'processing'}…"
     if pending:
         message = "Relaunch " + " and ".join(pending)
     elif "relaunch" in message.lower() or "restart" in message.lower():
@@ -729,6 +761,8 @@ def render_menu() -> None:
     print(_menu_item("Status", SECTION_COLOR, bold=True))
     status_color = "#C2410C,#FDBA74" if state.get("busy") or pending else DETAIL_COLOR
     print(_menu_item(f"  {message}", status_color))
+    if off_components and state["mode"] != "native":
+        print(_menu_item(f"  Off  —  {', '.join(off_components)}", DETAIL_COLOR))
     print("---")
     print(_menu_item("GUIs", SECTION_COLOR, bold=True))
     print("  Headroom Dashboard | bash=/usr/bin/open param1=-a param2=Safari param3=http://127.0.0.1:8787/dashboard terminal=false color=" + DETAIL_COLOR + " trim=false")
@@ -764,6 +798,57 @@ def clear_busy() -> None:
     if str(state.get("message", "")).startswith("Working:"):
         state["message"] = "Ready"
     _save_state(state)
+
+
+def _friendly_action_label(action: str) -> str:
+    extra_labels = {
+        "optimized": "Optimised mode",
+        "native": "Native mode",
+        "remote-control": "Claude Remote Control",
+        "headroom-scope": "Headroom scope",
+        "enable-xcode-mcp": "Xcode MCP",
+    }
+    return COMPONENT_LABELS.get(action) or extra_labels.get(action, action)
+
+
+def _record_component_result(component: str, ok: bool, message: str) -> None:
+    state = _load_state()
+    errors = state.setdefault("component_errors", {})
+    errors[component] = None if ok else message
+    _save_state(state)
+
+
+def run_exclusive(action: str, func) -> tuple[bool, str, bool]:
+    """Run `func` while holding an exclusive lock across all mutating commands.
+
+    Without this, two overlapping controller.py invocations (e.g. clicking a
+    toggle while "Optimised mode" is still applying) each read-modify-write
+    the same config files independently; whichever finishes last silently
+    discards the other's change. Rather than serialize by waiting (which
+    would hide how long an action is taking), a second call while one is
+    already in flight is rejected immediately so nothing is silently lost.
+
+    Returns (ok, message, ran). `ran` is False when the action was rejected
+    because the lock was busy — callers must not treat that as the target
+    component's own error, since it never got a turn to run at all.
+    """
+
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    lock_handle = open(LOCK_FILE, "a+")
+    try:
+        fcntl.flock(lock_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        lock_handle.close()
+        running = _friendly_action_label(_load_state().get("busy_action", "")) or "another action"
+        return False, f"Busy: {running} is still running — try again in a moment", False
+    try:
+        set_busy(_friendly_action_label(action))
+        ok, message = func()
+        return ok, message, True
+    finally:
+        clear_busy()
+        fcntl.flock(lock_handle, fcntl.LOCK_UN)
+        lock_handle.close()
 
 
 def check_updates() -> tuple[bool, str]:
@@ -806,39 +891,49 @@ def main(argv: list[str]) -> int:
     if command == "menu":
         render_menu()
         return 0
-    if command == "remote-control":
-        enabled = not bool(_load_state().get("remote_control", True))
-        ok, message = set_remote_control(enabled)
-        print(message)
-        return 0 if ok else 1
     if command == "status":
         print(json.dumps(current_status(), ensure_ascii=False))
         return 0
-    if command == "busy":
-        set_busy(" ".join(argv[1:]) or "processing")
-        return 0
-    if command == "clear-busy":
-        clear_busy()
-        return 0
     if command in {"optimized", "native"}:
-        ok, message = _set_mode(command)
+        ok, message, ran = run_exclusive(command, lambda: _set_mode(command))
+        if ran and ok:
+            state = _load_state()
+            state["component_errors"] = {key: None for key in state["component_errors"]}
+            _save_state(state)
     elif command == "toggle" and len(argv) > 1:
-        ok, message = toggle_component(argv[1])
+        component = argv[1]
+        ok, message, ran = run_exclusive(component, lambda: toggle_component(component))
+        if ran:
+            _record_component_result(component, ok, message)
+    elif command == "remote-control":
+        ok, message, ran = run_exclusive(
+            command,
+            lambda: set_remote_control(not bool(_load_state().get("remote_control", True))),
+        )
     elif command == "install-jcodemunch":
-        ok, message = _set_jcodemunch(True)
-        state = _load_state()
-        state["components"]["jcodemunch"] = ok
-        state["message"] = message
-        _save_state(state)
+        def _install_jcodemunch() -> tuple[bool, str]:
+            ok, message = _set_jcodemunch(True)
+            state = _load_state()
+            state["components"]["jcodemunch"] = ok
+            state["message"] = message
+            _save_state(state)
+            return ok, message
+
+        ok, message, ran = run_exclusive("jcodemunch", _install_jcodemunch)
+        if ran:
+            _record_component_result("jcodemunch", ok, message)
     elif command == "check-updates":
         ok, message = check_updates()
     elif command == "install-plugins":
         ok, message = install_plugins()
     elif command == "enable-xcode-mcp":
-        ok, message = enable_xcode_mcp()
+        ok, message, ran = run_exclusive("enable-xcode-mcp", enable_xcode_mcp)
     elif command == "headroom-scope":
         requested = argv[1].lower() if len(argv) > 1 else "toggle"
-        ok, message = toggle_headroom_participation(None if requested == "toggle" else requested == "on")
+        ok, message, ran = run_exclusive(
+            "headroom-scope",
+            lambda: toggle_headroom_participation(None if requested == "toggle" else requested == "on"),
+        )
     elif command == "open-llmtrim-watch":
         ok, message = open_terminal_tool("llmtrim")
     elif command == "open-rtk-gain":
@@ -861,8 +956,21 @@ def _hook_command(entry: Any) -> str:
     )
 
 
+def _is_headroom_ensure_hook(hook: Any) -> bool:
+    command = str(hook.get("command", "")) if isinstance(hook, dict) else ""
+    return "headroom-init-claude" in command or "headroom init hook ensure" in command
+
+
 def remove_headroom_claude_env(payload: dict[str, Any]) -> dict[str, Any]:
-    """Remove only Headroom-owned Claude env and ensure-hook entries."""
+    """Remove only Headroom-owned Claude env and ensure-hook entries.
+
+    set_rtk_claude_hook() reuses an existing matcher="Bash" entry rather than
+    creating its own, so another tool's hook (e.g. RTK's) can end up merged
+    into the SAME entry object as Headroom's ensure-hook. Filtering must
+    therefore happen at the individual hook level, not the whole entry --
+    dropping the entire entry would collaterally delete whatever else was
+    merged into it.
+    """
 
     result = copy.deepcopy(payload)
     env = result.get("env")
@@ -875,12 +983,21 @@ def remove_headroom_claude_env(payload: dict[str, Any]) -> dict[str, Any]:
         for event, entries in list(hooks.items()):
             if not isinstance(entries, list):
                 continue
-            hooks[event] = [
-                entry
-                for entry in entries
-                if "headroom-init-claude" not in _hook_command(entry)
-                and "headroom init hook ensure" not in _hook_command(entry)
-            ]
+            retained_entries = []
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    retained_entries.append(entry)
+                    continue
+                nested = entry.get("hooks")
+                if isinstance(nested, list):
+                    kept_nested = [hook for hook in nested if not _is_headroom_ensure_hook(hook)]
+                    if kept_nested:
+                        updated = copy.deepcopy(entry)
+                        updated["hooks"] = kept_nested
+                        retained_entries.append(updated)
+                elif not _is_headroom_ensure_hook(entry):
+                    retained_entries.append(entry)
+            hooks[event] = retained_entries
     return result
 
 

@@ -28,6 +28,8 @@ class RuntimeHelperTests(unittest.TestCase):
         self.assertEqual(state["mode"], "native")
         self.assertFalse(state["headroom_in_mode"])
         self.assertEqual(set(state["components"]), {"headroom", "llmtrim", "rtk", "jcodemunch", "xcode"})
+        self.assertEqual(set(state["component_errors"]), {"headroom", "llmtrim", "rtk", "jcodemunch", "xcode"})
+        self.assertTrue(all(value is None for value in state["component_errors"].values()))
 
     def test_atomic_json_write_round_trips(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -323,6 +325,114 @@ class RuntimeHelperTests(unittest.TestCase):
         self.assertNotIn("Repair SwiftBar plugins", output.getvalue())
         self.assertNotIn("Install / refresh jCodeMunch", output.getvalue())
 
+    def test_run_exclusive_rejects_instead_of_racing_when_already_locked(self):
+        with tempfile.TemporaryDirectory() as directory:
+            lock_path = Path(directory) / "controller.lock"
+            state_dir = Path(directory)
+            state = default_state()
+            state["busy_action"] = "RTK · Claude hook"
+            calls = []
+
+            def fake_func():
+                calls.append("ran")
+                return True, "ok"
+
+            with (
+                patch.object(controller, "LOCK_FILE", lock_path),
+                patch.object(controller, "STATE_DIR", state_dir),
+                patch.object(controller, "_load_state", return_value=state),
+            ):
+                # Simulate another invocation already holding the lock.
+                holder = open(lock_path, "a+")
+                import fcntl as _fcntl
+                _fcntl.flock(holder, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+                try:
+                    ok, message, ran = controller.run_exclusive("headroom", fake_func)
+                finally:
+                    _fcntl.flock(holder, _fcntl.LOCK_UN)
+                    holder.close()
+        self.assertFalse(ok)
+        self.assertFalse(ran)
+        self.assertIn("RTK · Claude hook", message)
+        self.assertIn("Busy", message)
+        self.assertEqual(calls, [])
+
+    def test_run_exclusive_runs_and_clears_busy_when_lock_is_free(self):
+        with tempfile.TemporaryDirectory() as directory:
+            lock_path = Path(directory) / "controller.lock"
+            state_dir = Path(directory)
+            state = default_state()
+            saved = []
+            with (
+                patch.object(controller, "LOCK_FILE", lock_path),
+                patch.object(controller, "STATE_DIR", state_dir),
+                patch.object(controller, "_load_state", return_value=state),
+                patch.object(controller, "_save_state", side_effect=lambda s: saved.append(dict(s))),
+            ):
+                ok, message, ran = controller.run_exclusive("rtk", lambda: (True, "done"))
+        self.assertTrue(ok)
+        self.assertTrue(ran)
+        self.assertEqual(message, "done")
+        # busy was set true then cleared back to false around the call
+        busy_values = [entry["busy"] for entry in saved]
+        self.assertIn(True, busy_values)
+        self.assertFalse(saved[-1]["busy"])
+
+    def test_record_component_result_stores_and_clears_errors(self):
+        state = default_state()
+        with (
+            patch.object(controller, "_load_state", return_value=state),
+            patch.object(controller, "_save_state"),
+        ):
+            controller._record_component_result("rtk", False, "start failed")
+        self.assertEqual(state["component_errors"]["rtk"], "start failed")
+        with (
+            patch.object(controller, "_load_state", return_value=state),
+            patch.object(controller, "_save_state"),
+        ):
+            controller._record_component_result("rtk", True, "started")
+        self.assertIsNone(state["component_errors"]["rtk"])
+
+    def test_menu_shows_per_component_error(self):
+        state = {
+            "title": "◐ Mixed",
+            "mode": "mixed",
+            "needs_restart": False,
+            "restart_pending": {},
+            "busy": False,
+            "busy_action": "",
+            "components": {"headroom": False, "llmtrim": True, "rtk": False, "jcodemunch": True, "xcode": True},
+            "component_errors": {"rtk": "start failed: exit 1"},
+            "remote_control": True,
+            "message": "Ready",
+        }
+        with patch.object(controller, "current_status", return_value=state), patch.object(sys, "stdout", new_callable=io.StringIO) as output:
+            render_menu()
+        rendered = output.getvalue()
+        self.assertIn("start failed: exit 1", rendered)
+        self.assertIn("Off", rendered)
+        self.assertIn("RTK · Claude hook", rendered)
+        self.assertIn("Headroom", rendered)
+
+    def test_menu_shows_turning_on_progress_for_the_busy_component(self):
+        state = {
+            "title": "◐ Mixed",
+            "mode": "mixed",
+            "needs_restart": False,
+            "restart_pending": {},
+            "busy": True,
+            "busy_action": "RTK · Claude hook",
+            "components": {"headroom": False, "llmtrim": True, "rtk": False, "jcodemunch": True, "xcode": True},
+            "component_errors": {},
+            "remote_control": True,
+            "message": "Working: RTK · Claude hook…",
+        }
+        with patch.object(controller, "current_status", return_value=state), patch.object(sys, "stdout", new_callable=io.StringIO) as output:
+            render_menu()
+        rendered = output.getvalue()
+        rtk_line = next(line for line in rendered.splitlines() if "RTK · Claude hook" in line and "▱" in line)
+        self.assertIn("working…", rtk_line)
+
     def test_menu_shows_working_state_during_an_action(self):
         state = {
             "title": "◉ Native",
@@ -346,8 +456,12 @@ class RuntimeHelperTests(unittest.TestCase):
         self.assertIn("/opt/homebrew/bin", content)
         self.assertIn("/Users/andrew/.local/bin", content)
         self.assertIn("/Users/andrew/.nvm/versions/node/v24.18.0/bin", content)
-        self.assertIn('"$PYTHON" "$CONTROLLER" busy', content)
-        self.assertIn('"$PYTHON" "$CONTROLLER" clear-busy', content)
+        # controller.py now owns the busy flag and locking for every mutating
+        # command, so the wrapper just forwards args instead of orchestrating
+        # separate busy/clear-busy calls around each action.
+        self.assertNotIn('"$PYTHON" "$CONTROLLER" busy', content)
+        self.assertNotIn('"$PYTHON" "$CONTROLLER" clear-busy', content)
+        self.assertIn('"$PYTHON" "$CONTROLLER" "$@"', content)
 
     def test_terminal_shortcuts_run_the_requested_commands(self):
         with patch.object(controller, "_run", return_value=(True, "")) as run:
@@ -365,6 +479,19 @@ class RuntimeHelperTests(unittest.TestCase):
         rtk_command = run.call_args.args[0]
         self.assertEqual(rtk_command[:2], ["/usr/bin/osascript", "-e"])
         self.assertIn('do script "rtk gain"', rtk_command[2])
+
+    def test_rejected_toggle_does_not_pollute_the_target_components_own_error(self):
+        # Regression: a click rejected because another action is busy must not
+        # be recorded as component_errors["rtk"] = "Busy: ..." — RTK never ran
+        # and isn't actually broken, it just didn't get a turn.
+        with (
+            patch.object(controller, "run_exclusive", return_value=(False, "Busy: Headroom is still running — try again in a moment", False)),
+            patch.object(controller, "_record_component_result") as record,
+            patch.object(sys, "stdout", new_callable=io.StringIO),
+        ):
+            status = controller.main(["toggle", "rtk"])
+        self.assertEqual(status, 1)
+        record.assert_not_called()
 
     def test_terminal_shortcut_actions_are_dispatched(self):
         with (

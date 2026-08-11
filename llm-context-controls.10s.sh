@@ -18,25 +18,13 @@ PLUGIN_DIR="$(cd "$(dirname "$0")" && pwd)"
 PYTHON="/opt/homebrew/bin/python3"
 CONTROLLER="$PLUGIN_DIR/controller.py"
 
-if [[ "${1:-}" == "toggle" && -n "${2:-}" ]]; then
-  "$PYTHON" "$CONTROLLER" busy "${2}"
-  set +e
-  "$PYTHON" "$CONTROLLER" toggle "$2"
-  status=$?
-  "$PYTHON" "$CONTROLLER" clear-busy
-  exit "$status"
-fi
-
-if [[ "${1:-}" == "optimized" || "${1:-}" == "native" || "${1:-}" == "remote-control" ]]; then
-  "$PYTHON" "$CONTROLLER" busy "$1"
-  set +e
-  "$PYTHON" "$CONTROLLER" "$1"
-  status=$?
-  "$PYTHON" "$CONTROLLER" clear-busy
-  exit "$status"
-fi
-
-if [[ "${1:-}" == "check-updates" || "${1:-}" == "install-plugins" || "${1:-}" == "enable-xcode-mcp" || "${1:-}" == "headroom-scope" || "${1:-}" == "open-llmtrim-watch" || "${1:-}" == "open-rtk-gain" ]]; then
+# controller.py itself now holds an exclusive lock and manages the busy flag
+# for every mutating command (toggle/optimized/native/remote-control/etc.), so
+# the wrapper just forwards args. This closed a race where two overlapping
+# invocations of this script (e.g. clicking a toggle while "Optimised mode"
+# was still applying) could each read-modify-write the same config files and
+# silently clobber each other's change.
+if [[ $# -gt 0 ]]; then
   exec "$PYTHON" "$CONTROLLER" "$@"
 fi
 
